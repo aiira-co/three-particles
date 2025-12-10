@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AAA Particles Example</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'three';
+    import { ParticleSystem, VFXManager, PhysicsProvider } from './dist/index.esm.js';
+    
+    // Setup Three.js
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGPURenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    
+    // Create VFX Manager
+    const vfxManager = new VFXManager(scene, renderer);
+    
+    // Create fire system
+    const fireSystem = vfxManager.createSystem('fire', {
+      maxParticles: 10000,
+      texture: await loadTexture('fire.png'),
+      textureSheet: {
+        tilesX: 8,
+        tilesY: 8,
+        fps: 30,
+        loop: true
+      },
+      softParticles: true,
+      sorted: true,
+    });
+    
+    // Add physics
+    fireSystem.addProvider(new PhysicsProvider(
+      new THREE.Vector3(0, 5, 0), // Upward gravity for fire
+      0.05,
+      0.2
+    ));
+    
+    // Burst particles
+    fireSystem.burst(1000);
+    
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      const deltaTime = clock.getDelta();
+      vfxManager.update(deltaTime, camera);
+      
+      renderer.render(scene, camera);
+    }
+    
+    animate();
+  </script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+{
+    "name": "@interverse/three-particles",
+    "version": "1.0.0-alpha.0",
+    "description": "AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like features",
+    "main": "dist/index.cjs.js",
+    "module": "dist/index.esm.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsc && tsc -p tsconfig.esm.json",
+        "build:cjs": "tsc",
+        "build:esm": "tsc -p tsconfig.esm.json",
+        "clean": "rimraf dist",
+        "prepublishOnly": "yarn clean && yarn build"
+    },
+    "keywords": [
+        "three",
+        "threejs",
+        "particles",
+        "gpu",
+        "webgpu",
+        "vfx",
+        "visual-effects",
+        "niagara",
+        "vfx-graph"
+    ],
+    "author": "Interverse Engine",
+    "license": "MIT",
+    "peerDependencies": {
+        "three": ">=0.181.0"
+    },
+    "devDependencies": {
+        "@types/three": "^0.181.0",
+        "rimraf": "^5.0.0",
+        "typescript": "^5.3.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": ""
+    },
+    "bugs": {
+        "url": ""
+    },
+    "homepage": ""
+}
