@@ -1,6 +1,6 @@
 {
     "name": "@interverse/three-particles",
-    "version": "1.0.0-alpha.0",
+    "version": "1.0.0",
     "description": "AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like features",
     "main": "dist/index.cjs.js",
     "module": "dist/index.esm.js",
@@ -40,10 +40,10 @@
     },
     "repository": {
         "type": "git",
-        "url": ""
+        "url": "git+https://github.com/aiira-co/three-particles.git"
     },
     "bugs": {
-        "url": ""
+        "url": "https://github.com/aiira-co/three-particles/issues"
     },
-    "homepage": ""
+    "homepage": "https://github.com/aiira-co/three-particles#readme"
 }

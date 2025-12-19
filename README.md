@@ -132,14 +132,41 @@ interface GPUParticleSystemConfig {
 
 | Method | Description |
 |--------|-------------|
-| `update(renderer, deltaTime, camera)` | Update physics and rendering |
+| `update(renderer, deltaTime, camera)` | Update physics and rendering (skips if paused) |
 | `burst(count)` | Emit a burst of particles |
 | `setEmissionRate(rate)` | Set continuous emission rate |
 | `addProvider(provider)` | Add behavior provider |
 | `removeProvider(name)` | Remove provider by name |
+| `getProvider<T>(name)` | Get provider by name |
 | `setDepthTexture(texture)` | Set depth buffer for soft particles |
-| `play()` / `pause()` / `stop()` | Playback control |
+| `play()` | Resume playback |
+| `pause()` | Pause (keeps particles visible) |
+| `stop()` | Stop and reset all particles |
 | `dispose()` | Clean up resources |
+
+#### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isPlaying` | `boolean` | `true` if system is playing and not paused |
+| `isPaused` | `boolean` | `true` if system is paused |
+| `stats` | `ParticleStats` | Alive/dead counts, GPU memory, compute time |
+| `mesh` | `THREE.InstancedMesh` | The underlying particle mesh |
+
+#### Playback Control
+
+```typescript
+// Pause and resume
+particles.pause();
+console.log(particles.isPaused); // true
+
+particles.play();
+console.log(particles.isPlaying); // true
+
+// Stop kills all particles and resets
+particles.stop();
+console.log(particles.isPlaying); // false
+```
 
 ### VFXManager
 
