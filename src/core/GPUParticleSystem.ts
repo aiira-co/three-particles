@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import {
   vec3, vec4, float, uniform, storage, Fn, instanceIndex,
   positionLocal, mix, smoothstep, If, sin, cos, texture, uv,
-  cameraViewMatrix, clamp as tslClamp, max as tslMax, length as tslLength
+  cameraViewMatrix, clamp as tslClamp, max as tslMax, length as tslLength,
+  normalize as tslNormalize
 } from 'three/tsl';
 import {
   MeshBasicNodeMaterial,
@@ -22,6 +23,41 @@ import { TrailRenderer } from './TrailRenderer.js';
 export class GPUParticleSystem extends THREE.Group {
   public mesh: THREE.InstancedMesh;
   public stats: ParticleStats;
+
+  /** Particle data nodes for custom materials.
+   * Access these to read particle attributes in your custom TSL shaders.
+   * Use instanceIndex to get data for the current particle.
+   */
+  public particleNodes!: {
+    positions: any;
+    velocities: any;
+    ages: any;
+    lifetimes: any;
+    rotations: any;
+    colors: any;
+    /** Storage node for particle style index */
+    styles: any;
+    /** Current simulation time uniform */
+    time: any;
+    /** Delta time uniform */
+    delta: any;
+    /** Instance index for current particle */
+    index: any;
+
+    // Helper functions that return computed TSL nodes
+    /** Returns lifetime progress (0-1) for current particle */
+    progress: () => any;
+    /** Returns speed (length of velocity) for current particle */
+    speed: () => any;
+    /** Returns normalized velocity direction for current particle */
+    direction: () => any;
+    /** Returns style index for current particle */
+    styleIndex: () => any;
+    /** Check if current particle matches given style index */
+    isStyle: (styleIndex: number) => any;
+    /** Number of defined styles */
+    styleCount: number;
+  };
 
   private config: GPUParticleSystemConfig;
   private storageManager: StorageManager;
@@ -72,6 +108,48 @@ export class GPUParticleSystem extends THREE.Group {
     this.lifetimesNode = storage(this.storageManager.lifetimes, 'float', maxParticles);
     this.rotationsNode = storage(this.storageManager.rotations, 'vec3', maxParticles);
     this.colorsNode = storage(this.storageManager.colors, 'vec4', maxParticles);
+    const stylesNode = storage(this.storageManager.styles, 'float', maxParticles);
+
+    // Expose particle nodes for custom materials
+    const posNode = this.positionsNode;
+    const velNode = this.velocitiesNode;
+    const agesNode = this.agesNode;
+    const lifetimesNode = this.lifetimesNode;
+    const timeUniform = this.uTime;
+    const styleCount = this.config.styles?.length ?? 1;
+
+    this.particleNodes = {
+      positions: posNode,
+      velocities: velNode,
+      ages: agesNode,
+      lifetimes: lifetimesNode,
+      rotations: this.rotationsNode,
+      colors: this.colorsNode,
+      styles: stylesNode,
+      time: timeUniform,
+      delta: this.uDelta,
+      index: instanceIndex,
+
+      // Helper functions that return computed TSL nodes
+      progress: () => {
+        const age = timeUniform.sub(agesNode.element(instanceIndex));
+        const lifetime = lifetimesNode.element(instanceIndex);
+        return age.div(lifetime).clamp(0, 1);
+      },
+      speed: () => {
+        return tslLength(velNode.element(instanceIndex));
+      },
+      direction: () => {
+        return tslNormalize(velNode.element(instanceIndex));
+      },
+      styleIndex: () => {
+        return stylesNode.element(instanceIndex);
+      },
+      isStyle: (idx: number) => {
+        return stylesNode.element(instanceIndex).equal(float(idx));
+      },
+      styleCount
+    };
 
     // Pass storage nodes to ComputePipeline so it uses the SAME nodes as render shader
     this.computePipeline = new ComputePipeline(
@@ -103,6 +181,12 @@ export class GPUParticleSystem extends THREE.Group {
     if (this.config.velocityVariation) this.computePipeline.setVelocityVariation(this.config.velocityVariation);
     if (this.config.emitterSize) this.computePipeline.setEmitterSize(this.config.emitterSize);
     if (typeof this.config.lifetime === 'number') this.computePipeline.setSpawnLifetime(this.config.lifetime);
+
+    // Sync style weights for multi-style particle assignment
+    if (this.config.styles && this.config.styles.length > 0) {
+      const weights = this.config.styles.map(s => s.weight ?? 1);
+      this.indirectRenderer.setStyleWeights(weights);
+    }
 
     // Initialize optional features
     this.initializeFeatures();
@@ -220,13 +304,52 @@ export class GPUParticleSystem extends THREE.Group {
   }
 
   private createMaterial(): THREE.Material {
+    // Use custom material if provided
+    if (this.config.material) {
+      // Apply default settings to custom material
+      const mat = this.config.material;
+      if ('transparent' in mat) {
+        (mat as any).transparent = true;
+        (mat as any).depthWrite = false;
+        (mat as any).blending = this.config.blending ?? THREE.AdditiveBlending;
+      }
+      // IMPORTANT: Set positionNode so particles follow their positions
+      if (!(mat as any).positionNode) {
+        if (mat instanceof SpriteNodeMaterial) {
+          (mat as any).positionNode = this.buildSpritePositionNode();
+        } else if (mat instanceof MeshBasicNodeMaterial) {
+          (mat as any).positionNode = this.buildVertexShader();
+        }
+      }
+      return mat;
+    }
+
+    // Use material factory if provided
+    if (this.config.materialFactory) {
+      const mat = this.config.materialFactory(this.particleNodes);
+      if ('transparent' in mat) {
+        (mat as any).transparent = true;
+        (mat as any).depthWrite = false;
+        (mat as any).blending = this.config.blending ?? THREE.AdditiveBlending;
+      }
+      // IMPORTANT: Set positionNode so particles follow their positions
+      if (!(mat as any).positionNode) {
+        if (mat instanceof SpriteNodeMaterial) {
+          (mat as any).positionNode = this.buildSpritePositionNode();
+        } else if (mat instanceof MeshBasicNodeMaterial) {
+          (mat as any).positionNode = this.buildVertexShader();
+        }
+      }
+      return mat;
+    }
+
     // Use SpriteNodeMaterial for billboard (camera-facing) particles
     // SpriteNodeMaterial handles billboard transformation automatically
     if (this.config.billboard !== false) {
       const material = new SpriteNodeMaterial();
       material.transparent = true;
       material.depthWrite = false;
-      material.blending = THREE.AdditiveBlending;
+      material.blending = this.config.blending ?? THREE.AdditiveBlending;
 
       // For sprite, use positionNode for offset and scaleNode for size
       material.positionNode = this.buildSpritePositionNode();
@@ -241,7 +364,7 @@ export class GPUParticleSystem extends THREE.Group {
     const material = new MeshBasicNodeMaterial();
     material.transparent = true;
     material.depthWrite = false;
-    material.blending = THREE.AdditiveBlending;
+    material.blending = this.config.blending ?? THREE.AdditiveBlending;
 
     if (this.config.castShadows) {
       material.shadowSide = THREE.FrontSide;
@@ -512,6 +635,11 @@ export class GPUParticleSystem extends THREE.Group {
 
     // Clear spawn queue after execution
     this.computePipeline.clearSpawnQueue();
+
+    // STEP 3: Update trail renderer (records position history for ribbon trails)
+    if (this.trailRenderer) {
+      this.trailRenderer.update(renderer, deltaTime, this.uTime.value);
+    }
 
     // Update mesh count - use full capacity since all particles are managed by GPU
     // In a proper implementation, we'd use an indirect draw call with GPU-computed count

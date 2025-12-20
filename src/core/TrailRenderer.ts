@@ -269,7 +269,7 @@ export class TrailRenderer {
 
             // Update head index
             trailHeadIndicesNode.element(particleIdx).assign(newHeadIdx);
-        });
+        })();
     }
 
     /**

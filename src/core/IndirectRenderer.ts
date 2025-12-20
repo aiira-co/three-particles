@@ -27,6 +27,10 @@ export class IndirectRenderer {
   private emitterShape: EmitterShape = 'point';
   private emitterSize = new THREE.Vector3(1, 1, 1);
 
+  // Multi-style support
+  private styleWeights: number[] = [1]; // Default: single style with weight 1
+  private styleCumulativeWeights: number[] = [1]; // For weighted random selection
+
   // Ring buffer tracking
   private nextSpawnIndex: number = 0;
 
@@ -78,6 +82,25 @@ export class IndirectRenderer {
   }
 
   /**
+   * Set style weights for multi-style particle assignment
+   * @param weights Array of weights (higher = more particles of that style)
+   */
+  setStyleWeights(weights: number[]): void {
+    if (weights.length === 0) {
+      this.styleWeights = [1];
+    } else {
+      this.styleWeights = weights;
+    }
+
+    // Calculate cumulative weights for efficient random selection
+    let total = 0;
+    this.styleCumulativeWeights = this.styleWeights.map(w => {
+      total += w;
+      return total;
+    });
+  }
+
+  /**
    * Process queued emissions
    * @param currentTime The current simulation time (used as spawn time for new particles)
    */
@@ -116,6 +139,7 @@ export class IndirectRenderer {
       this.storage.velocities.needsUpdate = true;
       this.storage.ages.needsUpdate = true;      // Now stores spawnTime
       this.storage.lifetimes.needsUpdate = true;
+      this.storage.styles.needsUpdate = true;    // Style indices
     }
   }
 
@@ -202,6 +226,28 @@ export class IndirectRenderer {
     // Lifetime with variation (this is immutable per particle)
     const lifetime = this.spawnLifetime + rand4 * this.spawnLifetimeVariation;
     this.storage.lifetimes.setX(index, Math.max(0.1, lifetime));
+
+    // Assign style index based on weights
+    const styleIndex = this.pickStyleByWeight();
+    this.storage.styles.setX(index, styleIndex);
+  }
+
+  /**
+   * Pick a style index based on configured weights
+   */
+  private pickStyleByWeight(): number {
+    if (this.styleCumulativeWeights.length <= 1) return 0;
+
+    const totalWeight = this.styleCumulativeWeights[this.styleCumulativeWeights.length - 1];
+    const rand = Math.random() * totalWeight;
+
+    // Binary search would be more efficient for many styles, but linear is fine for <10
+    for (let i = 0; i < this.styleCumulativeWeights.length; i++) {
+      if (rand <= this.styleCumulativeWeights[i]) {
+        return i;
+      }
+    }
+    return this.styleCumulativeWeights.length - 1;
   }
 
   /**

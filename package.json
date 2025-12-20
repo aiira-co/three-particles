@@ -1,6 +1,6 @@
 {
     "name": "@interverse/three-particles",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like features",
     "type": "module",
     "main": "dist/index.js",

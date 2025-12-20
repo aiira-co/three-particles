@@ -13,6 +13,7 @@ export class StorageManager {
   public lifetimes: StorageInstancedBufferAttribute;
   public colors: StorageInstancedBufferAttribute;
   public sizes: StorageInstancedBufferAttribute;
+  public styles: StorageInstancedBufferAttribute; // Per-particle style index (0, 1, 2...)
 
   // Custom data for providers
   public customData1: StorageInstancedBufferAttribute;
@@ -32,6 +33,7 @@ export class StorageManager {
     this.lifetimes = new StorageInstancedBufferAttribute(maxParticles, 1);
     this.colors = new StorageInstancedBufferAttribute(maxParticles, 4);
     this.sizes = new StorageInstancedBufferAttribute(maxParticles, 1);
+    this.styles = new StorageInstancedBufferAttribute(maxParticles, 1); // Style index
 
     this.customData1 = new StorageInstancedBufferAttribute(maxParticles, 4);
     this.customData2 = new StorageInstancedBufferAttribute(maxParticles, 4);
@@ -51,13 +53,14 @@ export class StorageManager {
       this.lifetimes.setX(i, 1.0);
       this.colors.setXYZW(i, 1, 1, 1, 0);
       this.sizes.setX(i, 0.1);
+      this.styles.setX(i, 0); // Default style 0
     }
   }
 
   getGPUMemory(): number {
     const attributes = [
       this.positions, this.velocities, this.rotations, this.angularVelocities,
-      this.ages, this.lifetimes, this.colors, this.sizes,
+      this.ages, this.lifetimes, this.colors, this.sizes, this.styles,
       this.customData1, this.customData2, this.customData3, this.customData4
     ];
 

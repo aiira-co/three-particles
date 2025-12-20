@@ -30,6 +30,26 @@ export interface GPUParticleSystemConfig {
   opacityStart?: number;
   opacityEnd?: number;
 
+  /** Custom material for particles (overrides built-in material if provided).
+   * The material receives particle data via storage nodes accessible through
+   * the GPUParticleSystem.particleNodes property.
+   */
+  material?: THREE.Material;
+
+  /** Material factory callback that receives particle context for building custom shaders.
+   * Called once during system initialization. The returned material is used for all particles.
+   * This is more convenient than `material` as it provides direct access to particle nodes.
+   */
+  materialFactory?: (context: ParticleMaterialContext) => THREE.Material;
+
+  /** Define multiple particle styles for varied appearance within the same emitter.
+   * Each spawned particle will be assigned a style based on weights.
+   */
+  styles?: StyleConfig[];
+
+  /** Blending mode for particles (default: AdditiveBlending) */
+  blending?: THREE.Blending;
+
   // Lifetime Curves (optional - defaults to linear)
   /** Curve for size interpolation over lifetime */
   sizeCurve?: LifetimeCurve | CurvePreset;
@@ -124,3 +144,57 @@ export type ParticleSystemConfig = GPUParticleSystemConfig & {
   collisions?: CollisionConfig;
 };
 
+/**
+ * Configuration for a particle style within a multi-style emitter.
+ */
+export interface StyleConfig {
+  /** Optional name for identification */
+  name?: string;
+  /** Weight for spawn distribution (default: 1). Higher = more particles of this style. */
+  weight?: number;
+  /** Color associated with this style */
+  color?: THREE.Color;
+  /** Custom data that can be accessed in materialFactory */
+  customData?: Record<string, any>;
+}
+
+/**
+ * Context provided to materialFactory callback for building custom particle shaders.
+ * All nodes are TSL storage/uniform nodes that can be used directly in shader construction.
+ */
+export interface ParticleMaterialContext {
+  /** Storage node for particle positions (vec3) */
+  positions: any;
+  /** Storage node for particle velocities (vec3) */
+  velocities: any;
+  /** Storage node for particle ages/spawn times (float) */
+  ages: any;
+  /** Storage node for particle lifetimes (float) */
+  lifetimes: any;
+  /** Storage node for particle rotations (vec3) */
+  rotations: any;
+  /** Storage node for particle colors (vec4) */
+  colors: any;
+  /** Storage node for particle style index (float, 0 to N-1) */
+  styles: any;
+  /** Current simulation time uniform */
+  time: any;
+  /** Delta time uniform */
+  delta: any;
+  /** Instance index node for current particle */
+  index: any;
+
+  // Helper functions that return computed TSL nodes
+  /** Returns lifetime progress (0-1) for current particle */
+  progress: () => any;
+  /** Returns speed (length of velocity) for current particle */
+  speed: () => any;
+  /** Returns normalized velocity direction for current particle */
+  direction: () => any;
+  /** Returns style index for current particle */
+  styleIndex: () => any;
+  /** Check if current particle matches given style index */
+  isStyle: (styleIndex: number) => any;
+  /** Number of defined styles (from config) */
+  styleCount: number;
+}

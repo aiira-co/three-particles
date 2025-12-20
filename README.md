@@ -146,6 +146,94 @@ const particles = new GPUParticleSystem({
 particles.setDepthTexture(depthTexture);
 ```
 
+### Custom Materials
+
+Inject your own TSL-based material for full shader control. Two approaches available:
+
+#### Option A: Material Injection
+Pass a pre-created material and access `particleNodes` after construction.
+
+```typescript
+import { SpriteNodeMaterial } from 'three/webgpu';
+import { mix, color, instanceIndex } from 'three/tsl';
+
+const customMaterial = new SpriteNodeMaterial();
+
+const particles = new GPUParticleSystem({
+  material: customMaterial,
+  // ... other config
+});
+
+// Build shader using particle nodes
+const { velocities, progress, speed } = particles.particleNodes;
+
+// Use helper functions for cleaner code
+customMaterial.colorNode = mix(color(0xff0000), color(0xffff00), speed().div(10));
+customMaterial.opacityNode = progress().oneMinus();
+customMaterial.scaleNode = progress().oneMinus().mul(0.5);
+```
+
+#### Option B: Material Factory (Recommended)
+Use `materialFactory` callback for cleaner access to particle context.
+
+```typescript
+import { SpriteNodeMaterial } from 'three/webgpu';
+import { mix, color } from 'three/tsl';
+
+const particles = new GPUParticleSystem({
+  materialFactory: (ctx) => {
+    const mat = new SpriteNodeMaterial();
+    
+    // ctx provides storage nodes + helper functions
+    mat.colorNode = mix(color(0xff0000), color(0xffff00), ctx.speed().div(10));
+    mat.opacityNode = ctx.progress().oneMinus();
+    mat.scaleNode = ctx.progress().oneMinus().mul(0.5);
+    
+    return mat;
+  },
+  // ... other config
+});
+```
+
+**ParticleMaterialContext properties:**
+- `positions`, `velocities`, `ages`, `lifetimes`, `rotations`, `colors`, `styles` - Storage nodes
+- `time`, `delta` - Uniforms
+- `index` - Instance index node
+- `progress()` - Returns lifetime progress (0-1)
+- `speed()` - Returns velocity magnitude
+- `direction()` - Returns normalized velocity
+- `styleIndex()` - Returns style index for current particle
+- `isStyle(n)` - Returns true if particle matches style n
+- `styleCount` - Number of defined styles
+
+### Multi-Style Particles
+
+Create particles with multiple visual styles (e.g., fire + smoke) in a single emitter.
+
+```typescript
+import { SpriteNodeMaterial } from 'three/webgpu';
+import { mix, color } from 'three/tsl';
+
+const particles = new GPUParticleSystem({
+  styles: [
+    { name: 'fire', weight: 3, color: new THREE.Color(0xff3300) },
+    { name: 'smoke', weight: 1, color: new THREE.Color(0x333333) }
+  ],
+  materialFactory: (ctx) => {
+    const mat = new SpriteNodeMaterial();
+    
+    // ctx.isStyle(0) returns 1 for fire, 0 for smoke
+    const isFire = ctx.isStyle(0);
+    mat.colorNode = mix(color(0x333333), color(0xff3300), isFire);
+    mat.opacityNode = ctx.progress().oneMinus();
+    
+    return mat;
+  }
+});
+```
+
+Style weights determine spawn distribution: fire (weight 3) spawns 75%, smoke (weight 1) spawns 25%.
+
 ## API Reference
 
 ### GPUParticleSystemConfig
