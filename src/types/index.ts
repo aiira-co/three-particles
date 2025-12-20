@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { LifetimeCurve, CurvePreset } from '../curves/LifetimeCurve.js';
+import { GradientCurve } from '../curves/GradientCurve.js';
 
 export type EmitterShape = 'point' | 'box' | 'sphere' | 'mesh' | 'line';
 
@@ -8,16 +10,16 @@ export interface GPUParticleSystemConfig {
   emissionRate?: number;
   lifetime?: number;
   loop?: boolean;
-  
+
   // Geometry
   particleGeometry?: THREE.BufferGeometry;
   billboard?: boolean;
-  
+
   // Emitter
   emitterShape?: EmitterShape;
   emitterSize?: THREE.Vector3;
   emitterMesh?: THREE.Mesh;
-  
+
   // Visual
   texture?: THREE.Texture;
   textureSheet?: TextureSheetConfig;
@@ -27,19 +29,42 @@ export interface GPUParticleSystemConfig {
   sizeEnd?: number;
   opacityStart?: number;
   opacityEnd?: number;
-  
+
+  // Lifetime Curves (optional - defaults to linear)
+  /** Curve for size interpolation over lifetime */
+  sizeCurve?: LifetimeCurve | CurvePreset;
+  /** Curve for opacity interpolation over lifetime */
+  opacityCurve?: LifetimeCurve | CurvePreset;
+  /** Gradient for color over lifetime (overrides colorStart/End if provided) */
+  colorGradient?: GradientCurve;
+
   // Physics
   velocity?: THREE.Vector3;
   velocityVariation?: THREE.Vector3;
   gravity?: THREE.Vector3;
   drag?: number;
   turbulence?: number;
-  
+
+  // Trails - GPU ribbon trails with position history
+  /** Trail configuration for ribbon-style particle trails */
+  trail?: {
+    /** Enable trail effect */
+    enabled: boolean;
+    /** Number of trail segments (default: 8) */
+    segments?: number;
+    /** Seconds between position samples (default: 0.02) */
+    updateInterval?: number;
+    /** Trail width multiplier (default: 1.0) */
+    width?: number;
+    /** Fade alpha from head to tail (default: true) */
+    fadeAlpha?: boolean;
+  };
+
   // Advanced Physics
   vectorField?: THREE.Data3DTexture;
   floorY?: number | null;
   bounciness?: number;
-  
+
   // Performance & Quality
   sorted?: boolean;
   softParticles?: boolean;
@@ -49,10 +74,10 @@ export interface GPUParticleSystemConfig {
   occlusionCulled?: boolean;
   receiveShadows?: boolean;
   castShadows?: boolean;
-  
+
   // LOD
   lod?: LODConfig[];
-  
+
   // Sub-emitters
   subEmitters?: {
     onDeath?: GPUParticleSystemConfig;

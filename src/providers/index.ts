@@ -1,8 +1,7 @@
-export * from './BaseProvider';
-export * from './BoidsProvider';
-export * from './MagneticProvider';
-export * from './MouseProvider';
-export * from './PhysicsProvider';
-// export * from './RandomProvider';
-// export * from './RepulsionProvider';
-// export * from './VortexProvider';
+export * from './BaseProvider.js';
+export * from './PhysicsProvider.js';
+export * from './AttractorProvider.js';
+export * from './TurbulenceProvider.js';
+export * from './VortexProvider.js';
+export * from './BoidsProvider.js';
+export * from './MouseInteractionProvider.js';

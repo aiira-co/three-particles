@@ -7,6 +7,8 @@ AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like f
 - ✅ **GPU Compute Shaders** - Physics simulation via TSL compute
 - ✅ **High Performance** - 100K+ particles at 60fps
 - ✅ **Indirect Rendering** - Efficient instanced mesh rendering
+- ✅ **Ribbon Trails** - GPU-accelerated smooth trails with position history
+- ✅ **Advanced Curves** - Non-linear control over size, opacity, and color
 - ✅ **Texture Sheet Animation** - Sprite sheet support with configurable FPS
 - ✅ **Soft Particles** - Depth-aware edge fading
 - ✅ **Depth Buffer Collisions** - Particles bounce off scene geometry
@@ -16,7 +18,7 @@ AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like f
 
 ## Requirements
 
-- Three.js ≥ 0.181.0
+- Three.js ≥ 0.182.0
 - WebGPU-enabled browser (Chrome 113+, Edge 113+, or Firefox Nightly)
 
 ## Installation
@@ -79,13 +81,74 @@ function animate() {
 animate();
 ```
 
+## Advanced Features
+
+### Ribbon Trails
+
+Create smooth, flowing trails behind particles using GPU position history.
+
+```typescript
+const particles = new GPUParticleSystem({
+  // ... basic config
+  trail: {
+    enabled: true,
+    segments: 16,        // Number of history points
+    width: 0.2,          // Width relative to particle size
+    updateInterval: 0.02, // Sampling rate (seconds)
+    fadeAlpha: true      // Fade opacity from head to tail
+  }
+});
+```
+
+### Curves & Gradients
+
+Control properties over particle lifetime using non-linear curves.
+
+```typescript
+import { LifetimeCurve, GradientCurve } from '@interverse/three-particles';
+
+const particles = new GPUParticleSystem({
+  // Ease-out size
+  sizeCurve: new LifetimeCurve([
+    { p: 0, v: 0.1 }, 
+    { p: 0.2, v: 1.0 }, 
+    { p: 1, v: 0.0 }
+  ]),
+  
+  // Color gradient: red -> yellow -> smoke
+  colorGradient: new GradientCurve([
+    { t: 0, c: new THREE.Color(1, 0, 0) },
+    { t: 0.5, c: new THREE.Color(1, 1, 0) },
+    { t: 1, c: new THREE.Color(0.2, 0.2, 0.2) }
+  ])
+});
+```
+
+### Advanced Physics
+
+Enable complex interactions like depth collisions and vector fields.
+
+```typescript
+const particles = new GPUParticleSystem({
+  // Bounce off scene geometry (requires depth texture)
+  depthCollisions: true,
+  bounciness: 0.6,
+  
+  // Simple floor collision
+  floorY: 0, 
+  
+  // 3D Vector field for flow effects
+  vectorField: myVectorFieldTexture3D,
+  turbulence: 0.5,
+});
+
+// Important: Pass depth texture for depth collisions inside render loop
+particles.setDepthTexture(depthTexture);
+```
+
 ## API Reference
 
-### GPUParticleSystem
-
-The main particle system class. Extends `THREE.Group`.
-
-#### Constructor Options
+### GPUParticleSystemConfig
 
 ```typescript
 interface GPUParticleSystemConfig {
@@ -102,10 +165,11 @@ interface GPUParticleSystemConfig {
   // Emitter Shape
   emitterShape?: 'point' | 'box' | 'sphere' | 'mesh' | 'line';
   emitterSize?: THREE.Vector3;
+  emitterMesh?: THREE.Mesh;   // Emit from surface of mesh
   
   // Visual
   texture?: THREE.Texture;
-  textureSheet?: TextureSheetConfig;
+  textureSheet?: TextureSheetConfig; // Sprite sheet config
   colorStart?: THREE.Color;
   colorEnd?: THREE.Color;
   sizeStart?: number;
@@ -113,136 +177,45 @@ interface GPUParticleSystemConfig {
   opacityStart?: number;
   opacityEnd?: number;
   
+  // Curves
+  sizeCurve?: LifetimeCurve | CurvePreset;
+  opacityCurve?: LifetimeCurve | CurvePreset;
+  colorGradient?: GradientCurve;
+  
   // Physics
   velocity?: THREE.Vector3;
   velocityVariation?: THREE.Vector3;
   gravity?: THREE.Vector3;
   drag?: number;
   turbulence?: number;
+  vectorField?: THREE.Data3DTexture;
+  
+  // Trails
+  trail?: TrailConfig;
+  
+  // Collisions
+  depthCollisions?: boolean;
+  bounciness?: number;
+  floorY?: number;
   
   // Quality
   sorted?: boolean;           // Back-to-front sorting
   softParticles?: boolean;    // Depth-aware fading
-  depthCollisions?: boolean;  // Bounce off geometry
+  softness?: number;          // Soft edge distance
   frustumCulled?: boolean;    // GPU frustum culling
+  
+  // LOD
+  lod?: LODConfig[];
 }
-```
-
-#### Methods
-
-| Method | Description |
-|--------|-------------|
-| `update(renderer, deltaTime, camera)` | Update physics and rendering (skips if paused) |
-| `burst(count)` | Emit a burst of particles |
-| `setEmissionRate(rate)` | Set continuous emission rate |
-| `addProvider(provider)` | Add behavior provider |
-| `removeProvider(name)` | Remove provider by name |
-| `getProvider<T>(name)` | Get provider by name |
-| `setDepthTexture(texture)` | Set depth buffer for soft particles |
-| `play()` | Resume playback |
-| `pause()` | Pause (keeps particles visible) |
-| `stop()` | Stop and reset all particles |
-| `dispose()` | Clean up resources |
-
-#### Properties
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `isPlaying` | `boolean` | `true` if system is playing and not paused |
-| `isPaused` | `boolean` | `true` if system is paused |
-| `stats` | `ParticleStats` | Alive/dead counts, GPU memory, compute time |
-| `mesh` | `THREE.InstancedMesh` | The underlying particle mesh |
-
-#### Playback Control
-
-```typescript
-// Pause and resume
-particles.pause();
-console.log(particles.isPaused); // true
-
-particles.play();
-console.log(particles.isPlaying); // true
-
-// Stop kills all particles and resets
-particles.stop();
-console.log(particles.isPlaying); // false
-```
-
-### VFXManager
-
-Manages multiple particle systems with shared resources.
-
-```typescript
-import { VFXManager } from '@interverse/three-particles';
-
-const vfx = new VFXManager(scene, renderer);
-
-// Create named system
-const fire = vfx.createSystem('fire', { /* config */ });
-const smoke = vfx.createSystem('smoke', { /* config */ });
-
-// Update all systems
-vfx.update(deltaTime, camera);
-
-// Access system
-vfx.getSystem('fire')?.burst(100);
-
-// Cleanup
-vfx.dispose();
-```
-
-### Providers
-
-Providers add custom behaviors to particles.
-
-```typescript
-import { PhysicsProvider, VortexProvider } from '@interverse/three-particles';
-
-// Add upward force
-particles.addProvider(new PhysicsProvider({
-  gravity: new THREE.Vector3(0, 5, 0),
-  drag: 0.1
-}));
-
-// Add swirl effect
-particles.addProvider(new VortexProvider(
-  new THREE.Vector3(0, 0, 0),  // center
-  new THREE.Vector3(0, 1, 0),  // axis
-  2.0                           // strength
-));
-```
-
-Available providers:
-- `PhysicsProvider` - Gravity and drag
-- `VortexProvider` - Swirl/tornado effect
-- `MagneticProvider` - Attraction to points
-- `BoidsProvider` - Flocking behavior
-- `MouseInteractionProvider` - Mouse attraction/repulsion
-
-## Texture Sheets
-
-Animate particles with sprite sheets:
-
-```typescript
-const particles = new GPUParticleSystem({
-  texture: await textureLoader.loadAsync('explosion.png'),
-  textureSheet: {
-    tilesX: 8,
-    tilesY: 8,
-    totalFrames: 64,
-    fps: 30,
-    loop: true,
-    randomStart: true
-  }
-});
 ```
 
 ## Performance Tips
 
-1. **Set `maxParticles` appropriately** - Allocates GPU memory upfront
-2. **Use `sorted: false`** when transparency order doesn't matter
-3. **Disable `softParticles`** if not needed (requires depth pass)
-4. **Pool particle systems** - Reuse instead of creating/destroying
+1. **Set `maxParticles` appropriately** - Allocates GPU memory upfront.
+2. **Use `sorted: false`** unless alpha blending requires strict ordering.
+3. **Control Trail Segments**: Higher segments = more memory and vertices. default(8) is usually good.
+4. **Disable `softParticles`** if not needed, as it adds a depth read overhead.
+5. **Pool particle systems** - Reuse systems for ephemeral effects instead of creating/destroying.
 
 ## Browser Support
 

@@ -1,19 +1,25 @@
 {
     "name": "@interverse/three-particles",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like features",
-    "main": "dist/index.cjs.js",
-    "module": "dist/index.esm.js",
+    "type": "module",
+    "main": "dist/index.js",
+    "module": "dist/index.js",
     "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        }
+    },
     "files": [
         "dist",
         "README.md",
         "LICENSE"
     ],
     "scripts": {
-        "build": "tsc && tsc -p tsconfig.esm.json",
-        "build:cjs": "tsc",
-        "build:esm": "tsc -p tsconfig.esm.json",
+        "build": "tsc",
         "clean": "rimraf dist",
         "prepublishOnly": "yarn clean && yarn build"
     },
