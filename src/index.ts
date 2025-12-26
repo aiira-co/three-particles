@@ -1,6 +1,7 @@
 // Core
 export { GPUParticleSystem } from './core/GPUParticleSystem.js';
 export { VFXManager } from './core/VFXManager.js';
+export { VFXSystemGroup } from './core/VFXSystemGroup.js';
 export { IndirectRenderer } from './core/IndirectRenderer.js';
 export { GPUSorter } from './core/GPUSorter.js';
 export { StorageManager } from './core/StorageManager.js';
@@ -28,6 +29,10 @@ export type { TurbulenceConfig } from './providers/TurbulenceProvider.js';
 export { BoidsProvider } from './providers/BoidsProvider.js';
 export type { BoidsConfig } from './providers/BoidsProvider.js';
 export { MouseInteractionProvider } from './providers/MouseInteractionProvider.js';
+export { WindProvider } from './providers/WindProvider.js';
+export type { WindConfig } from './providers/WindProvider.js';
+export { PathProvider } from './providers/PathProvider.js';
+export type { PathConfig } from './providers/PathProvider.js';
 export { DepthCollisionProvider } from './providers/DepthCollisionProvider.js';
 export type { DepthCollisionConfig } from './providers/DepthCollisionProvider.js';
 

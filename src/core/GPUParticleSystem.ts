@@ -81,6 +81,15 @@ export class GPUParticleSystem extends THREE.Group {
   private uEmitterMatrix = uniform(new THREE.Matrix4());
   private uCameraPosition = uniform(new THREE.Vector3());
 
+  // Runtime-editable appearance uniforms
+  private uColorStart = uniform(new THREE.Color(1, 1, 1));
+  private uColorEnd = uniform(new THREE.Color(1, 1, 1));
+  private uSizeStart = uniform(0.1);
+  private uSizeEnd = uniform(0.05);
+  private uOpacityStart = uniform(1.0);
+  private uOpacityEnd = uniform(0.0);
+  private uBillboard = uniform(1); // 1 = billboard mode, 0 = geometry mode
+
   // TSL Storage accessors (for shader access)
   private positionsNode: any;
   private velocitiesNode: any;
@@ -93,6 +102,15 @@ export class GPUParticleSystem extends THREE.Group {
     super();
 
     this.config = this.applyDefaults(config);
+
+    // Initialize appearance uniforms from config
+    this.uColorStart.value.copy(this.config.colorStart!);
+    this.uColorEnd.value.copy(this.config.colorEnd!);
+    this.uSizeStart.value = this.config.sizeStart!;
+    this.uSizeEnd.value = this.config.sizeEnd!;
+    this.uOpacityStart.value = this.config.opacityStart!;
+    this.uOpacityEnd.value = this.config.opacityEnd!;
+    this.uBillboard.value = this.config.billboard !== false ? 1 : 0;
 
     // Initialize core systems
     const maxParticles = this.config.maxParticles!;
@@ -315,11 +333,7 @@ export class GPUParticleSystem extends THREE.Group {
       }
       // IMPORTANT: Set positionNode so particles follow their positions
       if (!(mat as any).positionNode) {
-        if (mat instanceof SpriteNodeMaterial) {
-          (mat as any).positionNode = this.buildSpritePositionNode();
-        } else if (mat instanceof MeshBasicNodeMaterial) {
-          (mat as any).positionNode = this.buildVertexShader();
-        }
+        (mat as any).positionNode = this.buildVertexShader();
       }
       return mat;
     }
@@ -334,33 +348,12 @@ export class GPUParticleSystem extends THREE.Group {
       }
       // IMPORTANT: Set positionNode so particles follow their positions
       if (!(mat as any).positionNode) {
-        if (mat instanceof SpriteNodeMaterial) {
-          (mat as any).positionNode = this.buildSpritePositionNode();
-        } else if (mat instanceof MeshBasicNodeMaterial) {
-          (mat as any).positionNode = this.buildVertexShader();
-        }
+        (mat as any).positionNode = this.buildVertexShader();
       }
       return mat;
     }
 
-    // Use SpriteNodeMaterial for billboard (camera-facing) particles
-    // SpriteNodeMaterial handles billboard transformation automatically
-    if (this.config.billboard !== false) {
-      const material = new SpriteNodeMaterial();
-      material.transparent = true;
-      material.depthWrite = false;
-      material.blending = this.config.blending ?? THREE.AdditiveBlending;
-
-      // For sprite, use positionNode for offset and scaleNode for size
-      material.positionNode = this.buildSpritePositionNode();
-      material.scaleNode = this.buildScaleNode();
-      material.colorNode = this.buildFragmentShader();
-      material.opacityNode = this.buildOpacityNode();
-
-      return material;
-    }
-
-    // Use MeshBasicNodeMaterial for non-billboard particles (custom geometry)
+    // Always use MeshBasicNodeMaterial - billboard mode is handled via uniform in vertex shader
     const material = new MeshBasicNodeMaterial();
     material.transparent = true;
     material.depthWrite = false;
@@ -378,7 +371,6 @@ export class GPUParticleSystem extends THREE.Group {
   }
 
   private buildVertexShader(): any {
-    const useBillboard = this.config.billboard !== false;
     const sizeCurve = this.getCurve(this.config.sizeCurve, 'linear');
 
     return Fn(() => {
@@ -394,20 +386,31 @@ export class GPUParticleSystem extends THREE.Group {
       // Size over lifetime with curve easing
       const easedProgress = sizeCurve.sample(progress);
       const size = mix(
-        float(this.config.sizeStart!),
-        float(this.config.sizeEnd!),
+        this.uSizeStart,
+        this.uSizeEnd,
         easedProgress
       );
 
-      if (useBillboard) {
-        // Billboard: for now, use simple size scaling
-        // Full billboarding requires proper TSL matrix column extraction
-        const localOffset = positionLocal.mul(size);
-        return pos.add(localOffset);
-      } else {
-        // Simple position: particle position + local geometry * size
-        return pos.add(positionLocal.mul(size));
-      }
+      // For billboard mode, we need to orient the quad to face the camera
+      // Extract camera right and up vectors from view matrix using column access
+      // In TSL, matrix columns can be accessed via array-style indexing with float()
+      // viewMatrix column 0 = right, column 1 = up, column 2 = forward
+      const viewMat = cameraViewMatrix;
+      const right = vec3(viewMat[0][0], viewMat[1][0], viewMat[2][0]);
+      const up = vec3(viewMat[0][1], viewMat[1][1], viewMat[2][1]);
+
+      // Billboard offset: use local X/Y as offsets along camera right/up
+      const billboardOffset = right.mul(positionLocal.x).add(up.mul(positionLocal.y)).mul(size);
+
+      // Simple geometry offset (no billboard)
+      const simpleOffset = positionLocal.mul(size);
+
+      // Use uBillboard uniform to select between billboard and simple mode
+      // select(condition, ifTrue, ifFalse) where condition is compared to 0
+      const isBillboard = this.uBillboard.greaterThan(float(0.5));
+      const offset = isBillboard.select(billboardOffset, simpleOffset);
+
+      return pos.add(offset);
     })();
   }
 
@@ -440,8 +443,8 @@ export class GPUParticleSystem extends THREE.Group {
         if (this.config.opacityCurve) {
           const opacityEased = opacityCurve.sample(progress);
           opacity = mix(
-            float(this.config.opacityStart!),
-            float(this.config.opacityEnd!),
+            this.uOpacityStart,
+            this.uOpacityEnd,
             opacityEased
           );
         } else {
@@ -451,16 +454,16 @@ export class GPUParticleSystem extends THREE.Group {
         // Simple start/end color with easing
         const colorEase = smoothstep(float(0), float(1), progress);
         color = mix(
-          vec3(this.config.colorStart!.r, this.config.colorStart!.g, this.config.colorStart!.b),
-          vec3(this.config.colorEnd!.r, this.config.colorEnd!.g, this.config.colorEnd!.b),
+          vec3(this.uColorStart),
+          vec3(this.uColorEnd),
           colorEase
         );
 
         // Opacity with curve easing
         const opacityEased = opacityCurve.sample(progress);
         opacity = mix(
-          float(this.config.opacityStart!),
-          float(this.config.opacityEnd!),
+          this.uOpacityStart,
+          this.uOpacityEnd,
           opacityEased
         );
       }
@@ -513,8 +516,8 @@ export class GPUParticleSystem extends THREE.Group {
 
       // Size over lifetime
       const size = mix(
-        float(this.config.sizeStart!),
-        float(this.config.sizeEnd!),
+        this.uSizeStart,
+        this.uSizeEnd,
         smoothstep(float(0), float(1), progress)
       );
 
@@ -538,8 +541,8 @@ export class GPUParticleSystem extends THREE.Group {
 
       const ease = smoothstep(float(0), float(1), progress);
       const opacity = mix(
-        float(this.config.opacityStart!),
-        float(this.config.opacityEnd!),
+        this.uOpacityStart,
+        this.uOpacityEnd,
         ease
       );
 
@@ -723,28 +726,138 @@ export class GPUParticleSystem extends THREE.Group {
    * Set particle size range
    */
   setSize(start: number, end: number): void {
+    this.uSizeStart.value = start;
+    this.uSizeEnd.value = end;
     this.config.sizeStart = start;
     this.config.sizeEnd = end;
-    // Note: This requires rebuilding the shader in current implementation
-    // or using a uniform. For now, we update config which future restarts will pick up.
-    // Ideally, these should be uniforms in the vertex shader.
-    // Given the current architecture uses buildVertexShader with const config values:
-    // TSL construction: float(this.config.sizeStart!)
-    // This means runtime updates won't reflect without rebuilding material.
-    // Refactoring to uniforms is larger scope.
-    // For now, I'll document this limitation or force a material rebuild if permissible.
-    // Actually, let's keep it simple: the user wants runtime updates. 
-    // I should restart the system or better yet, plan a Refactor to use Uniforms for these properties.
-    // But for quick fix, I will rely on the user Restarting the flock (resetFlock).
   }
 
   /**
-   * Set particle color (start/end same for now)
+   * Set start size
+   */
+  setSizeStart(size: number): void {
+    this.uSizeStart.value = size;
+    this.config.sizeStart = size;
+  }
+
+  /**
+   * Set end size
+   */
+  setSizeEnd(size: number): void {
+    this.uSizeEnd.value = size;
+    this.config.sizeEnd = size;
+  }
+
+  /**
+   * Set particle color (start and end same)
    */
   setColor(color: THREE.Color): void {
+    this.uColorStart.value.copy(color);
+    this.uColorEnd.value.copy(color);
     this.config.colorStart?.copy(color);
     this.config.colorEnd?.copy(color);
-    // Same limitation as size - requires shader rebuild or uniforms.
+  }
+
+  /**
+   * Set start color
+   */
+  setColorStart(color: THREE.Color): void {
+    this.uColorStart.value.copy(color);
+    this.config.colorStart?.copy(color);
+  }
+
+  /**
+   * Set end color
+   */
+  setColorEnd(color: THREE.Color): void {
+    this.uColorEnd.value.copy(color);
+    this.config.colorEnd?.copy(color);
+  }
+
+  /**
+   * Set opacity range
+   */
+  setOpacity(start: number, end: number): void {
+    this.uOpacityStart.value = start;
+    this.uOpacityEnd.value = end;
+    this.config.opacityStart = start;
+    this.config.opacityEnd = end;
+  }
+
+  /**
+   * Set start opacity
+   */
+  setOpacityStart(opacity: number): void {
+    this.uOpacityStart.value = opacity;
+    this.config.opacityStart = opacity;
+  }
+
+  /**
+   * Set end opacity
+   */
+  setOpacityEnd(opacity: number): void {
+    this.uOpacityEnd.value = opacity;
+    this.config.opacityEnd = opacity;
+  }
+
+  /**
+   * Set billboard mode (particles face camera when enabled)
+   */
+  setBillboard(enabled: boolean): void {
+    this.uBillboard.value = enabled ? 1 : 0;
+    this.config.billboard = enabled;
+  }
+
+  /**
+   * Set particle geometry (recreates mesh - expensive operation)
+   * Use sparingly, prefer setting geometry at construction time when possible.
+   */
+  setGeometry(geometry: THREE.BufferGeometry): void {
+    if (!geometry) return;
+
+    // Store old mesh transform
+    const oldPosition = this.mesh.position.clone();
+    const oldQuaternion = this.mesh.quaternion.clone();
+    const oldScale = this.mesh.scale.clone();
+    const oldMaterial = this.mesh.material;
+
+    // Dispose old geometry
+    if (this.mesh.geometry) {
+      this.mesh.geometry.dispose();
+    }
+
+    // Remove old mesh from group
+    this.remove(this.mesh);
+
+    // Create new mesh with new geometry
+    this.config.particleGeometry = geometry;
+    this.mesh = new THREE.InstancedMesh(
+      geometry,
+      oldMaterial,
+      this.storageManager.maxParticles
+    );
+
+    // Restore transform
+    this.mesh.position.copy(oldPosition);
+    this.mesh.quaternion.copy(oldQuaternion);
+    this.mesh.scale.copy(oldScale);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+
+    // Add new mesh to group
+    this.add(this.mesh);
+  }
+
+  /**
+   * Set emitter shape configuration
+   */
+  setEmitterShape(shape: 'point' | 'box' | 'sphere' | 'mesh' | 'line', size?: THREE.Vector3): void {
+    this.config.emitterShape = shape;
+    if (size) {
+      this.config.emitterSize = size;
+    }
+    // Emitter shape is applied during particle spawning in compute pipeline
+    // No rebuild needed - takes effect on next particle spawn
   }
 
   /**

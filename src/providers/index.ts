@@ -5,3 +5,5 @@ export * from './TurbulenceProvider.js';
 export * from './VortexProvider.js';
 export * from './BoidsProvider.js';
 export * from './MouseInteractionProvider.js';
+export * from './WindProvider.js';
+export * from './PathProvider.js';

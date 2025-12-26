@@ -81,6 +81,40 @@ function animate() {
 animate();
 ```
 
+## Runtime Property Updates (v1.5.0+)
+
+Particle appearance properties can be updated at runtime without rebuilding the particle system. These properties use GPU uniforms for real-time updates:
+
+```typescript
+// Color
+particles.setColor(new THREE.Color(0x00ff00));        // Set both start and end
+particles.setColorStart(new THREE.Color(1, 0.5, 0));  // Just start color
+particles.setColorEnd(new THREE.Color(1, 0, 0));      // Just end color
+
+// Size
+particles.setSize(0.2, 0.05);        // Start and end size
+particles.setSizeStart(0.3);         // Just start size
+particles.setSizeEnd(0.01);          // Just end size
+
+// Opacity
+particles.setOpacity(1.0, 0.0);      // Start and end opacity
+particles.setOpacityStart(0.8);      // Just start opacity
+particles.setOpacityEnd(0.2);        // Just end opacity
+
+// Billboard mode (v1.6.0+)
+particles.setBillboard(true);        // Particles face camera
+particles.setBillboard(false);       // Particles use geometry orientation
+
+// Geometry (v1.7.0+) - expensive operation, recreates mesh
+particles.setGeometry(new THREE.SphereGeometry(0.5, 8, 8));
+
+// Emitter Shape (v1.7.0+)
+particles.setEmitterShape('sphere', new THREE.Vector3(2, 2, 2));  // Shape + size
+particles.setEmitterShape('box');    // Just shape, keep existing size
+```
+
+These setters update uniforms directly (except `setGeometry` which recreates the mesh), so changes are reflected immediately.
+
 ## Advanced Features
 
 ### Ribbon Trails
@@ -233,6 +267,334 @@ const particles = new GPUParticleSystem({
 ```
 
 Style weights determine spawn distribution: fire (weight 3) spawns 75%, smoke (weight 1) spawns 25%.
+
+## Providers
+
+Providers extend particle behavior with modular forces and effects. Add multiple providers to create complex simulations.
+
+### Using Providers
+
+```typescript
+import { 
+  GPUParticleSystem, 
+  AttractorProvider, 
+  TurbulenceProvider,
+  BoidsProvider 
+} from '@interverse/three-particles';
+
+const particles = new GPUParticleSystem({ /* config */ });
+
+// Add attractor force field
+const attractor = new AttractorProvider(4); // max 4 attractors
+attractor.addAttractor({ 
+  position: new THREE.Vector3(0, 2, 0), 
+  strength: 5 
+});
+particles.addProvider(attractor);
+
+// Add turbulence for organic motion
+particles.addProvider(new TurbulenceProvider({ 
+  frequency: 0.5, 
+  amplitude: 1.0 
+}));
+```
+
+### Available Providers
+
+| Provider | Description |
+|----------|-------------|
+| **AttractorProvider** | Point/area attraction with optional spin |
+| **BoidsProvider** | Flocking behavior ([Reynolds' Boids](https://www.red3d.com/cwr/boids/)) |
+| **TurbulenceProvider** | Noise-based turbulent motion |
+| **VortexProvider** | Spiral/vortex swirling forces |
+| **WindProvider** | Directional wind with gusts |
+| **PathProvider** | Guide particles along curves |
+| **MouseInteractionProvider** | Mouse/touch push/pull interaction |
+| **DepthCollisionProvider** | Bounce off scene geometry |
+
+---
+
+### AttractorProvider
+
+Creates gravitational/magnetic point attractors that pull particles.
+
+```typescript
+import { AttractorProvider } from '@interverse/three-particles';
+
+const attractor = new AttractorProvider(8); // max 8 attractors
+
+// Simple gravity point
+attractor.addAttractor({
+  position: new THREE.Vector3(0, 5, 0),
+  strength: 10
+});
+
+// Spinning attractor (vortex-like)
+attractor.addAttractor({
+  position: new THREE.Vector3(3, 0, 0),
+  strength: 5,
+  spinAxis: new THREE.Vector3(0, 1, 0),
+  spinStrength: 2.0
+});
+
+// Update attractor position at runtime
+attractor.updateAttractor(0, { position: new THREE.Vector3(0, 8, 0) });
+
+particles.addProvider(attractor);
+```
+
+**AttractorConfig:**
+- `position: Vector3` - Attractor world position
+- `strength: number` - Pull force (higher = stronger)
+- `spinAxis?: Vector3` - Axis for orbital spin
+- `spinStrength?: number` - Spin force multiplier
+- `falloff?: 'linear' | 'inverse' | 'inverseSq'` - Distance falloff (default: inverseSq)
+
+---
+
+### BoidsProvider
+
+Implements Craig Reynolds' [flocking algorithm](https://www.red3d.com/cwr/boids/) with three core rules: separation, alignment, and cohesion. Enhanced with goal seeking and boundary avoidance.
+
+```typescript
+import { BoidsProvider } from '@interverse/three-particles';
+
+const boids = new BoidsProvider({
+  // Core Reynolds' rules
+  separationWeight: 1.5,  // Avoid crowding
+  alignmentWeight: 1.0,   // Match neighbor velocity
+  cohesionWeight: 1.2,    // Move toward flock center
+  
+  // Perception
+  neighborRadius: 2.5,    // How far to look for neighbors
+  separationRadius: 1.0,  // Personal space radius
+  
+  // Movement limits
+  maxSpeed: 5.0,
+  maxForce: 1.0,          // Max steering force
+  
+  // Containment
+  boundSize: 10,          // Soft boundary size
+  boundaryForce: 2.0,     // Edge avoidance strength
+  
+  // Optional goal seeking (for scripted paths)
+  goalPosition: new THREE.Vector3(5, 0, 0),
+  goalWeight: 0.5,
+  
+  // Organic randomness
+  wanderStrength: 0.3
+});
+
+// Adjust at runtime
+boids.setSeparationWeight(2.0);
+boids.setGoal(new THREE.Vector3(10, 5, 0), 0.8);
+
+particles.addProvider(boids);
+```
+
+**BoidsConfig:**
+- `separationWeight?: number` - Avoid crowding neighbors
+- `alignmentWeight?: number` - Steer toward average heading
+- `cohesionWeight?: number` - Steer toward average position
+- `neighborRadius?: number` - Perception distance
+- `separationRadius?: number` - Personal space distance
+- `maxSpeed?: number` - Maximum speed limit
+- `maxForce?: number` - Maximum steering force
+- `boundSize?: number` - Soft boundary size
+- `boundaryForce?: number` - Edge avoidance strength
+- `goalPosition?: Vector3` - Optional goal to steer toward
+- `goalWeight?: number` - Goal seeking strength
+- `wanderStrength?: number` - Random organic motion
+
+---
+
+### TurbulenceProvider
+
+Physics-based turbulent forces following [fluid dynamics principles](https://journals.aps.org/prresearch/abstract/10.1103/PhysRevResearch.6.L012013). Implements Kolmogorov's energy cascade and Reynolds number effects.
+
+```typescript
+import { TurbulenceProvider } from '@interverse/three-particles';
+
+const turbulence = new TurbulenceProvider({
+  // Base turbulence
+  frequency: 0.5,
+  amplitude: 1.0,
+  octaves: 3,
+  friction: 0.02,
+  
+  // Physics enhancements
+  velocitySensitivity: 0.3,   // More turbulence at higher speeds
+  intermittency: 0.4,         // Puff-like variation over time
+  intermittencyFrequency: 0.5,
+  kolmogorovScaling: 0.7,     // Follow -5/3 energy law
+  
+  // Wake effect
+  flowDirection: new THREE.Vector3(1, 0, 0),
+  wakeIntensity: 0.5          // Stronger behind flow
+});
+
+// Adjust at runtime
+turbulence.setVelocitySensitivity(0.5);
+turbulence.setKolmogorovScaling(1.0);
+
+particles.addProvider(turbulence);
+```
+
+**TurbulenceConfig:**
+- `frequency?: number` - Noise spatial frequency
+- `amplitude?: number` - Force strength
+- `octaves?: number` - Noise layers (1-4)
+- `friction?: number` - Velocity damping (viscosity)
+- `velocitySensitivity?: number` - Reynolds effect (faster = more turbulent)
+- `intermittency?: number` - Puff behavior intensity
+- `intermittencyFrequency?: number` - Puff frequency
+- `kolmogorovScaling?: number` - 0=flat, 1=physically realistic -5/3 law
+- `flowDirection?: Vector3` - Direction for wake calculation
+- `wakeIntensity?: number` - Turbulence boost in wake regions
+
+---
+
+### VortexProvider
+
+Creates a swirling vortex that pulls particles while spinning them around an axis.
+
+```typescript
+import { VortexProvider } from '@interverse/three-particles';
+
+const vortex = new VortexProvider({
+  center: new THREE.Vector3(0, 0, 0),
+  axis: new THREE.Vector3(0, 1, 0),  // Spin around Y
+  strength: 2.0,      // Spin force
+  pullStrength: 0.5,  // Pull toward center
+  radius: 8.0         // Effect radius
+});
+
+// Move vortex at runtime
+vortex.setCenter(new THREE.Vector3(5, 0, 0));
+vortex.setStrength(3.0);
+
+particles.addProvider(vortex);
+```
+
+**VortexConfig:**
+- `center?: Vector3` - Vortex center position
+- `axis?: Vector3` - Rotation axis (normalized)
+- `strength?: number` - Spinning force
+- `pullStrength?: number` - Inward pull force
+- `radius?: number` - Effect radius (falloff)
+
+---
+
+### MouseInteractionProvider
+
+Enables mouse/touch interaction to push or pull particles.
+
+```typescript
+import { MouseInteractionProvider } from '@interverse/three-particles';
+
+const mouse = new MouseInteractionProvider({
+  strength: 5.0,
+  radius: 3.0,
+  push: true  // false = pull particles
+});
+
+particles.addProvider(mouse);
+
+// Update mouse position in animation loop
+mouse.setMousePosition(mouseWorldPos);
+```
+
+---
+
+### WindProvider
+
+Applies directional wind forces with gusts and turbulence for natural outdoor effects.
+
+```typescript
+import { WindProvider } from '@interverse/three-particles';
+
+const wind = new WindProvider({
+  direction: new THREE.Vector3(1, 0, 0.2),  // Wind direction
+  strength: 2.0,         // Base force
+  gustStrength: 1.5,     // Extra burst force
+  gustFrequency: 0.3,    // Gusts per second
+  turbulence: 0.3,       // Random variation
+  heightFactor: 0.1      // Stronger wind at higher Y
+});
+
+// Change wind direction at runtime
+wind.setDirection(new THREE.Vector3(-1, 0.2, 0));
+wind.setStrength(4.0);
+
+particles.addProvider(wind);
+```
+
+**WindConfig:**
+- `direction?: Vector3` - Wind direction (normalized)
+- `strength?: number` - Base wind force
+- `gustStrength?: number` - Additional burst force
+- `gustFrequency?: number` - Gust frequency (per second)
+- `turbulence?: number` - Random position-based variation (0-1)
+- `heightFactor?: number` - Wind strength increase per unit Y
+
+---
+
+### PathProvider
+
+Guides particles along a predefined path with attraction and alignment forces.
+
+```typescript
+import { PathProvider } from '@interverse/three-particles';
+
+const path = new PathProvider({
+  pathPoints: [
+    new THREE.Vector3(-5, 0, 0),
+    new THREE.Vector3(0, 4, 2),
+    new THREE.Vector3(5, 1, -1),
+    new THREE.Vector3(8, 0, 0)
+  ],
+  attraction: 2.0,   // Pull toward path
+  alignment: 1.5,    // Push along path direction
+  spread: 1.0,       // Max distance from path
+  speed: 1.0
+});
+
+// Update path at runtime
+path.setPath([...newPoints]);
+
+particles.addProvider(path);
+```
+
+**PathConfig:**
+- `pathPoints?: Vector3[]` - Path control points (min 2)
+- `attraction?: number` - Force pulling toward path
+- `alignment?: number` - Force pushing along path
+- `spread?: number` - Allowed deviation distance
+- `speed?: number` - Movement speed along path
+- `loop?: boolean` - Loop back to start
+
+---
+
+### Creating Custom Providers
+
+Extend `BaseProvider` to create custom force behaviors:
+
+```typescript
+import { BaseProvider, ProviderContext } from '@interverse/three-particles';
+import { vec3, Fn } from 'three/tsl';
+
+class WindProvider extends BaseProvider {
+  name = 'WindProvider';
+  priority = 30;
+
+  getForceNode(ctx: ProviderContext) {
+    return Fn(() => {
+      // Simple wind force
+      return vec3(1.0, 0, 0.5).mul(2.0);
+    })();
+  }
+}
+```
 
 ## API Reference
 

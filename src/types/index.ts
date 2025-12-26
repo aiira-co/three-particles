@@ -42,8 +42,23 @@ export interface GPUParticleSystemConfig {
    */
   materialFactory?: (context: ParticleMaterialContext) => THREE.Material;
 
+  /**
+   * Node-based factory for building particle appearance without full material override.
+   * Allows defining TSL nodes for color, size, opacity that are evaluated per-particle.
+   * More convenient than materialFactory when you just want to customize visual properties.
+   */
+  nodeFactory?: ParticleNodeFactory;
+
   /** Define multiple particle styles for varied appearance within the same emitter.
    * Each spawned particle will be assigned a style based on weights.
+   * 
+   * Styles can have:
+   * - Different geometry (e.g., quad for fire, cone for smoke)
+   * - Different colors, sizes, opacity with curves
+   * - Different physics (gravity, drag)
+   * - Different textures and blending modes
+   * 
+   * @see StyleConfig for all available options
    */
   styles?: StyleConfig[];
 
@@ -146,16 +161,143 @@ export type ParticleSystemConfig = GPUParticleSystemConfig & {
 
 /**
  * Configuration for a particle style within a multi-style emitter.
+ * 
+ * Styles allow defining different "species" of particles (fire, smoke, sparks)
+ * within the same system. Each particle is assigned a style at spawn based on weights.
+ * 
+ * For complex effects (explosion = fire + smoke), you can define multiple styles
+ * with different visual properties and the system will render them together.
  */
 export interface StyleConfig {
-  /** Optional name for identification */
+  // ==================== Identity ====================
+
+  /** Optional name for identification (e.g., "Fire", "Smoke", "Sparks") */
   name?: string;
+
   /** Weight for spawn distribution (default: 1). Higher = more particles of this style. */
   weight?: number;
-  /** Color associated with this style */
-  color?: THREE.Color;
+
+  // ==================== Geometry ====================
+
+  /** Per-style geometry (overrides system's particleGeometry for this style) */
+  geometry?: THREE.BufferGeometry;
+
+  /** Billboard mode for this style (default: inherit from system) */
+  billboard?: boolean;
+
+  // ==================== Visual Properties ====================
+
+  /** Start color for this style */
+  colorStart?: THREE.Color;
+
+  /** End color for this style */
+  colorEnd?: THREE.Color;
+
+  /** Gradient for color over lifetime (overrides colorStart/End) */
+  colorGradient?: GradientCurve;
+
+  /** Start size multiplier */
+  sizeStart?: number;
+
+  /** End size multiplier */
+  sizeEnd?: number;
+
+  /** Size curve over lifetime */
+  sizeCurve?: LifetimeCurve | CurvePreset;
+
+  /** Start opacity */
+  opacityStart?: number;
+
+  /** End opacity */
+  opacityEnd?: number;
+
+  /** Opacity curve over lifetime */
+  opacityCurve?: LifetimeCurve | CurvePreset;
+
+  /** Texture for this style (overrides system texture) */
+  texture?: THREE.Texture;
+
+  /** Texture sheet config for animated sprites */
+  textureSheet?: TextureSheetConfig;
+
+  /** Blending mode for this style (overrides system blending) */
+  blending?: THREE.Blending;
+
+  // ==================== Emission Overrides ====================
+
+  /** Lifetime override for this style */
+  lifetime?: number;
+
+  /** Lifetime variation (random range added to lifetime) */
+  lifetimeVariation?: number;
+
+  /** Initial velocity multiplier for this style */
+  velocityMultiplier?: number;
+
+  /** Velocity variation for this style */
+  velocityVariation?: THREE.Vector3;
+
+  // ==================== Physics Overrides ====================
+
+  /** Gravity multiplier for this style (0 = no gravity, 1 = full, -1 = inverted) */
+  gravityMultiplier?: number;
+
+  /** Drag coefficient for this style */
+  drag?: number;
+
+  /** Mass for physics calculations (affects forces) */
+  mass?: number;
+
+  // ==================== Trail Overrides ====================
+
+  /** Trail config override for this style */
+  trail?: {
+    enabled: boolean;
+    segments?: number;
+    width?: number;
+    fadeAlpha?: boolean;
+  };
+
+  // ==================== Custom Data ====================
+
   /** Custom data that can be accessed in materialFactory */
   customData?: Record<string, any>;
+}
+
+/**
+ * Node-based factory for building particle appearance from TSL nodes.
+ * Provides more flexibility than simple start/end values.
+ */
+export interface ParticleNodeFactory {
+  /** 
+   * TSL node for color output (vec3 or vec4).
+   * Receives ParticleMaterialContext, should return a color node.
+   */
+  colorNode?: (ctx: ParticleMaterialContext) => any;
+
+  /**
+   * TSL node for size output (float).
+   * Receives ParticleMaterialContext, should return a size multiplier node.
+   */
+  sizeNode?: (ctx: ParticleMaterialContext) => any;
+
+  /**
+   * TSL node for opacity output (float).
+   * Receives ParticleMaterialContext, should return an opacity node.
+   */
+  opacityNode?: (ctx: ParticleMaterialContext) => any;
+
+  /**
+   * TSL node for position offset (vec3).
+   * Applied after physics simulation, useful for jitter/wiggle effects.
+   */
+  positionOffsetNode?: (ctx: ParticleMaterialContext) => any;
+
+  /**
+   * TSL node for rotation (vec3 euler or quat).
+   * Receives ParticleMaterialContext, should return rotation node.
+   */
+  rotationNode?: (ctx: ParticleMaterialContext) => any;
 }
 
 /**
