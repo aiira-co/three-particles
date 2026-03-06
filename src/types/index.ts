@@ -4,6 +4,32 @@ import { GradientCurve } from '../curves/GradientCurve.js';
 
 export type EmitterShape = 'point' | 'box' | 'sphere' | 'mesh' | 'line';
 
+export interface ParticleSpawnOptions {
+  /** Number of particles to emit */
+  count?: number;
+  /** World-space spawn origin */
+  position?: THREE.Vector3;
+  /** Base velocity for emitted particles */
+  velocity?: THREE.Vector3;
+  /** Random velocity variation (+/- per axis) */
+  velocityVariation?: THREE.Vector3;
+  /** Lifetime override in seconds */
+  lifetime?: number;
+  /** Lifetime variation (+/- seconds) */
+  lifetimeVariation?: number;
+  /** Emitter shape override */
+  emitterShape?: EmitterShape;
+  /** Emitter size override */
+  emitterSize?: THREE.Vector3;
+  /** Optional emitter transform matrix (world) */
+  matrix?: THREE.Matrix4;
+  /** Transform velocity by matrix orientation (default: true) */
+  localSpaceVelocity?: boolean;
+  /** Transform emitter size by matrix scale (default: true) */
+  localSpaceEmitter?: boolean;
+}
+
+
 export interface GPUParticleSystemConfig {
   // Core
   maxParticles?: number;
@@ -102,6 +128,8 @@ export interface GPUParticleSystemConfig {
 
   // Performance & Quality
   sorted?: boolean;
+  /** Sort every Nth frame when sorting is enabled (1 = every frame). */
+  sortFrameInterval?: number | null;
   softParticles?: boolean;
   softness?: number;
   depthCollisions?: boolean;
@@ -340,3 +368,5 @@ export interface ParticleMaterialContext {
   /** Number of defined styles (from config) */
   styleCount: number;
 }
+
+

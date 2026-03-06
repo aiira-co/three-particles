@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { Node } from 'three/webgpu';
 import { uniform, texture, Fn, vec2, vec3, vec4, If, normalize, dot, cameraViewMatrix, cameraProjectionMatrix, float } from 'three/tsl';
 import type { CollisionConfig } from '../types/index.js';
 
@@ -30,7 +29,7 @@ export class DepthCollisions {
    * NOTE: This is a design stub - actual implementation requires
    * the depth texture to be passed as a uniform, not runtime checked.
    */
-  applyCollision(position: Node, velocity: Node): Node | null {
+  applyCollision(position: any, velocity: any): any | null {
     // Guard: depth texture must be set before building the node
     if (!this.depthTexture) {
       console.warn('DepthCollisions: No depth texture set, skipping collision node');

@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { Node } from 'three/webgpu';
 import { texture, uniform, Fn, vec2, float } from 'three/tsl';
 import type { TextureSheetConfig } from '../types';
 
@@ -19,7 +18,7 @@ export class TextureAtlas {
     };
   }
   
-  sample(index: Node, uv: Node, progress: Node): Node {
+  sample(index: any, uv: any, progress: any): any {
     return Fn(() => {
       // Calculate current frame
       const frame = this.calculateFrame(index, progress);
@@ -40,7 +39,7 @@ export class TextureAtlas {
     })();
   }
   
-  private calculateFrame(index: Node, progress: Node): Node {
+  private calculateFrame(index: any, progress: any): any {
     const totalFrames = this.config.totalFrames || 
       (this.config.tilesX * this.config.tilesY);
     

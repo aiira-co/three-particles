@@ -6,6 +6,18 @@ export { IndirectRenderer } from './core/IndirectRenderer.js';
 export { GPUSorter } from './core/GPUSorter.js';
 export { StorageManager } from './core/StorageManager.js';
 export { ComputePipeline } from './core/ComputePipeline.js';
+export { VFXStore, vfxStore } from './core/VFXStore.js';
+export type { VFXSystemHandle, RegisterVFXSystemOptions, EmitOptions } from './core/VFXStore.js';
+export { buildVFXFromNodeConfig, attachVFXProviders } from './core/VFXNodeAdapter.js';
+export type {
+  Vector3Like,
+  ColorLike,
+  VFXNodeEmitterConfig,
+  VFXNodeOutputConfig,
+  VFXNodeForceConfig,
+  VFXNodeSystemConfig,
+  VFXNodeBuildResult
+} from './core/VFXNodeAdapter.js';
 
 // Features
 export { TextureAtlas } from './features/TextureAtlas.js';

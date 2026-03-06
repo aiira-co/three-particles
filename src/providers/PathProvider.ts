@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { uniform, vec3, float, Fn } from 'three/tsl';
+import { uniform, uniformArray, vec3, float, Fn, Loop, If, select } from 'three/tsl';
 import { BaseProvider, ProviderContext } from './BaseProvider.js';
 
 /**
@@ -22,7 +22,7 @@ export interface PathConfig {
 
 /**
  * Path provider that guides particles along a predefined path
- * Particles are attracted toward the path and pushed along its direction
+ * Particles are attracted toward the closest path segment and pushed along its direction
  */
 export class PathProvider extends BaseProvider {
     name = 'PathProvider';
@@ -42,6 +42,11 @@ export class PathProvider extends BaseProvider {
     private uLoop: any;
     private uTime: any;
 
+    // GPU path representation
+    private readonly maxPathPoints: number = 32;
+    private uPathPoints: any;
+    private uPathSegmentCount: any;
+
     private timeAccumulator: number = 0;
 
     constructor(config: PathConfig = {}) {
@@ -53,6 +58,10 @@ export class PathProvider extends BaseProvider {
         this.uSpeed = uniform(config.speed ?? 1.0);
         this.uLoop = uniform(config.loop ? 1.0 : 0.0);
         this.uTime = uniform(0.0);
+
+        const defaultPoints = Array(this.maxPathPoints).fill(null).map(() => new THREE.Vector3(0, 0, 0));
+        this.uPathPoints = uniformArray(defaultPoints);
+        this.uPathSegmentCount = uniform(1);
 
         // Set initial path
         if (config.pathPoints && config.pathPoints.length >= 2) {
@@ -76,20 +85,39 @@ export class PathProvider extends BaseProvider {
             return;
         }
 
-        this.pathPoints = points.map(p => p.clone());
+        if (points.length > this.maxPathPoints) {
+            console.warn(`PathProvider: Path has ${points.length} points, truncating to ${this.maxPathPoints}`);
+        }
+
+        this.pathPoints = points.slice(0, this.maxPathPoints).map(p => p.clone());
 
         // Calculate directions and segment lengths
         this.pathDirections = [];
         this.pathLengths = [];
         this.totalLength = 0;
 
-        for (let i = 0; i < points.length - 1; i++) {
-            const dir = points[i + 1].clone().sub(points[i]);
+        for (let i = 0; i < this.pathPoints.length - 1; i++) {
+            const dir = this.pathPoints[i + 1].clone().sub(this.pathPoints[i]);
             const len = dir.length();
             this.pathLengths.push(len);
             this.totalLength += len;
-            this.pathDirections.push(dir.normalize());
+            this.pathDirections.push(len > 0 ? dir.normalize() : new THREE.Vector3(1, 0, 0));
         }
+
+        this.syncPathUniforms();
+    }
+
+    private syncPathUniforms(): void {
+        const count = this.pathPoints.length;
+        const lastPoint = count > 0 ? this.pathPoints[count - 1] : new THREE.Vector3(0, 0, 0);
+
+        for (let i = 0; i < this.maxPathPoints; i++) {
+            const point = i < count ? this.pathPoints[i] : lastPoint;
+            this.uPathPoints.array[i].copy(point);
+        }
+
+        const segmentCount = Math.max(1, count - 1);
+        this.uPathSegmentCount.value = Math.min(segmentCount, this.maxPathPoints - 1);
     }
 
     setAttraction(value: number): void {
@@ -131,7 +159,6 @@ export class PathProvider extends BaseProvider {
 
         for (let i = 0; i < this.pathPoints.length - 1; i++) {
             const segStart = this.pathPoints[i];
-            const segEnd = this.pathPoints[i + 1];
             const segDir = this.pathDirections[i];
             const segLen = this.pathLengths[i];
 
@@ -147,7 +174,7 @@ export class PathProvider extends BaseProvider {
                 closestDist = dist;
                 closestPoint = pointOnSeg;
                 closestDir = segDir.clone();
-                closestT = (accumulatedLength + clampedProj) / this.totalLength;
+                closestT = this.totalLength > 0 ? (accumulatedLength + clampedProj) / this.totalLength : 0;
             }
 
             accumulatedLength += segLen;
@@ -158,46 +185,55 @@ export class PathProvider extends BaseProvider {
 
     /**
      * Generate TSL force calculation node
-     * Note: This uses a simplified approach since TSL doesn't easily support
-     * variable-length arrays and complex control flow
+     * Uses uniformArray path points and loops over all active segments.
      */
     getForceNode(ctx: ProviderContext): any {
         const attraction = this.uAttraction;
         const alignment = this.uAlignment;
         const spread = this.uSpread;
         const speed = this.uSpeed;
-
-        // For TSL, we use a simplified approach with the first path segment
-        // A full implementation would require passing path data as uniforms
-        const pathStart = this.pathPoints[0] || new THREE.Vector3(0, 0, 0);
-        const pathEnd = this.pathPoints[1] || new THREE.Vector3(1, 0, 0);
-        const pathDir = this.pathDirections[0]?.clone() || new THREE.Vector3(1, 0, 0);
-
-        const uPathStart = uniform(pathStart);
-        const uPathEnd = uniform(pathEnd);
-        const uPathDir = uniform(pathDir);
+        const pathPoints = this.uPathPoints;
+        const pathSegmentCount = this.uPathSegmentCount;
 
         return Fn(() => {
-            // Vector from particle to path start
-            const toStart = uPathStart.sub(ctx.position);
-            const toEnd = uPathEnd.sub(ctx.position);
+            const closestDistSq = float(1e9).toVar();
+            const closestPoint = vec3(0, 0, 0).toVar();
+            const closestDir = vec3(1, 0, 0).toVar();
 
-            // Project position onto line segment
-            const segVec = uPathEnd.sub(uPathStart);
-            const segLen = segVec.length();
-            const segDir = segVec.normalize();
+            Loop(pathSegmentCount, ({ i }) => {
+                const segStart = pathPoints.element(i);
+                const segEnd = pathPoints.element(i.add(1));
 
-            const toPos = ctx.position.sub(uPathStart);
-            const proj = toPos.dot(segDir).clamp(0, segLen);
-            const closestPoint = uPathStart.add(segDir.mul(proj));
+                const segVec = segEnd.sub(segStart);
+                const segLen = segVec.length().max(0.0001);
+                const segDir = segVec.div(segLen);
 
-            // Attraction force toward path
+                const toPos = ctx.position.sub(segStart);
+                const proj = toPos.dot(segDir).clamp(0, segLen);
+                const pointOnSeg = segStart.add(segDir.mul(proj));
+
+                const toPath = pointOnSeg.sub(ctx.position);
+                const distSq = toPath.dot(toPath);
+
+                If(distSq.lessThan(closestDistSq), () => {
+                    closestDistSq.assign(distSq);
+                    closestPoint.assign(pointOnSeg);
+                    closestDir.assign(segDir);
+                });
+            });
+
+            // Attraction force toward closest path point
             const toPath = closestPoint.sub(ctx.position);
             const distToPath = toPath.length();
-            const attractForce = toPath.normalize().mul(attraction).mul(distToPath.div(spread).min(1));
+            const toPathDir = select(
+                distToPath.greaterThan(float(1e-5)),
+                toPath.div(distToPath),
+                vec3(0, 0, 0)
+            );
+            const attractForce = toPathDir.mul(attraction).mul(distToPath.div(spread).min(1));
 
-            // Alignment force along path direction
-            const alignForce = uPathDir.mul(alignment).mul(speed);
+            // Alignment force along closest segment direction
+            const alignForce = closestDir.mul(alignment).mul(speed);
 
             return attractForce.add(alignForce);
         })();
@@ -210,7 +246,9 @@ export class PathProvider extends BaseProvider {
             uPathSpread: this.uSpread,
             uPathSpeed: this.uSpeed,
             uPathLoop: this.uLoop,
-            uPathTime: this.uTime
+            uPathTime: this.uTime,
+            uPathPoints: this.uPathPoints,
+            uPathSegmentCount: this.uPathSegmentCount
         };
     }
 

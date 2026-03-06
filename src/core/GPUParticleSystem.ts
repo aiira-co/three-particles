@@ -8,13 +8,13 @@ import {
 import {
   MeshBasicNodeMaterial,
   SpriteNodeMaterial,
-  WebGPURenderer, Node
+  WebGPURenderer
 } from 'three/webgpu';
 import { StorageManager } from './StorageManager.js';
-import { IndirectRenderer } from './IndirectRenderer.js';
+import { IndirectRenderer, type SpawnOverrides } from './IndirectRenderer.js';
 import { GPUSorter } from './GPUSorter.js';
 import { ComputePipeline } from './ComputePipeline.js';
-import { GPUParticleSystemConfig, ParticleStats } from '../types/index.js';
+import { GPUParticleSystemConfig, ParticleStats, ParticleSpawnOptions, EmitterShape } from '../types/index.js';
 import { BaseProvider } from '../providers/BaseProvider.js';
 import { LifetimeCurve, CurvePreset } from '../curves/LifetimeCurve.js';
 import { GradientCurve } from '../curves/GradientCurve.js';
@@ -97,6 +97,13 @@ export class GPUParticleSystem extends THREE.Group {
   private lifetimesNode: any;
   private rotationsNode: any;
   private colorsNode: any;
+
+  // Scratch objects for world-space emitter spawning
+  private readonly _tmpEmitPosition = new THREE.Vector3();
+  private readonly _tmpEmitQuaternion = new THREE.Quaternion();
+  private readonly _tmpEmitScale = new THREE.Vector3(1, 1, 1);
+  private readonly _tmpEmitVelocity = new THREE.Vector3();
+  private readonly _tmpEmitVelocityVariation = new THREE.Vector3();
 
   constructor(config: GPUParticleSystemConfig = {}) {
     super();
@@ -197,6 +204,7 @@ export class GPUParticleSystem extends THREE.Group {
     // Also sync to ComputePipeline for GPU-based spawn randomization
     if (this.config.velocity) this.computePipeline.setSpawnVelocity(this.config.velocity);
     if (this.config.velocityVariation) this.computePipeline.setVelocityVariation(this.config.velocityVariation);
+    if (this.config.emitterShape) this.computePipeline.setEmitterShape(this.config.emitterShape);
     if (this.config.emitterSize) this.computePipeline.setEmitterSize(this.config.emitterSize);
     if (typeof this.config.lifetime === 'number') this.computePipeline.setSpawnLifetime(this.config.lifetime);
 
@@ -246,6 +254,7 @@ export class GPUParticleSystem extends THREE.Group {
       opacityStart: 1.0,
       opacityEnd: 0.0,
       sorted: false,
+      sortFrameInterval: null,
       softParticles: false,
       softness: 0.5,
       depthCollisions: false,
@@ -261,6 +270,7 @@ export class GPUParticleSystem extends THREE.Group {
     if (this.config.sorted) {
       this.sorter = new GPUSorter(this.storageManager.maxParticles);
       this.computePipeline.addSorter(this.sorter);
+      this.computePipeline.setSortFrameInterval(this.config.sortFrameInterval);
     }
 
     // Soft particles
@@ -331,9 +341,9 @@ export class GPUParticleSystem extends THREE.Group {
         (mat as any).depthWrite = false;
         (mat as any).blending = this.config.blending ?? THREE.AdditiveBlending;
       }
-      // IMPORTANT: Set positionNode so particles follow their positions
+      // IMPORTANT: Inject particle transform while preserving standard local-space flow
       if (!(mat as any).positionNode) {
-        (mat as any).positionNode = this.buildVertexShader();
+        (mat as any).positionNode = positionLocal.add(this.buildParticleOffsetNode());
       }
       return mat;
     }
@@ -346,9 +356,9 @@ export class GPUParticleSystem extends THREE.Group {
         (mat as any).depthWrite = false;
         (mat as any).blending = this.config.blending ?? THREE.AdditiveBlending;
       }
-      // IMPORTANT: Set positionNode so particles follow their positions
+      // IMPORTANT: Inject particle transform while preserving standard local-space flow
       if (!(mat as any).positionNode) {
-        (mat as any).positionNode = this.buildVertexShader();
+        (mat as any).positionNode = positionLocal.add(this.buildParticleOffsetNode());
       }
       return mat;
     }
@@ -370,7 +380,7 @@ export class GPUParticleSystem extends THREE.Group {
     return material;
   }
 
-  private buildVertexShader(): any {
+  private buildParticleOffsetNode(): any {
     const sizeCurve = this.getCurve(this.config.sizeCurve, 'linear');
 
     return Fn(() => {
@@ -391,27 +401,30 @@ export class GPUParticleSystem extends THREE.Group {
         easedProgress
       );
 
-      // For billboard mode, we need to orient the quad to face the camera
-      // Extract camera right and up vectors from view matrix using column access
-      // In TSL, matrix columns can be accessed via array-style indexing with float()
-      // viewMatrix column 0 = right, column 1 = up, column 2 = forward
-      const viewMat = cameraViewMatrix;
+      // For billboard mode, orient local quad axes to camera
+      const viewMat: any = cameraViewMatrix;
       const right = vec3(viewMat[0][0], viewMat[1][0], viewMat[2][0]);
       const up = vec3(viewMat[0][1], viewMat[1][1], viewMat[2][1]);
 
-      // Billboard offset: use local X/Y as offsets along camera right/up
+      // Billboard offset: local X/Y projected to camera-facing basis
       const billboardOffset = right.mul(positionLocal.x).add(up.mul(positionLocal.y)).mul(size);
 
-      // Simple geometry offset (no billboard)
+      // Geometry mode offset in local space
       const simpleOffset = positionLocal.mul(size);
 
-      // Use uBillboard uniform to select between billboard and simple mode
-      // select(condition, ifTrue, ifFalse) where condition is compared to 0
       const isBillboard = this.uBillboard.greaterThan(float(0.5));
       const offset = isBillboard.select(billboardOffset, simpleOffset);
 
-      return pos.add(offset);
+      // Final particle position from origin
+      const finalPosition = pos.add(offset);
+
+      // Return delta from original local position so callers can compose as positionLocal + delta
+      return finalPosition.sub(positionLocal);
     })();
+  }
+
+  private buildVertexShader(): any {
+    return positionLocal.add(this.buildParticleOffsetNode());
   }
 
   private buildFragmentShader(): any {
@@ -562,7 +575,7 @@ export class GPUParticleSystem extends THREE.Group {
     // Rotate around X axis
     const cx = cos(euler.x);
     const sx = sin(euler.x);
-    let rotated: Node = vec3(
+    let rotated: any = vec3(
       v.x,
       v.y.mul(cx).sub(v.z.mul(sx)),
       v.y.mul(sx).add(v.z.mul(cx))
@@ -612,6 +625,7 @@ export class GPUParticleSystem extends THREE.Group {
     this.uDelta.value = deltaTime;
     this.updateWorldMatrix(true, false);
     this.uEmitterMatrix.value.copy(this.matrixWorld);
+    this.computePipeline.setEmitterMatrix(this.uEmitterMatrix.value);
     camera.getWorldPosition(this.uCameraPosition.value);
 
     // Update providers
@@ -662,10 +676,86 @@ export class GPUParticleSystem extends THREE.Group {
    * Emit a burst of particles
    */
   burst(count: number): void {
-    // Queue particles for emission on CPU
-    this.indirectRenderer.emit(count);
-    // Process the queue immediately to write to StorageManager buffers
-    this.indirectRenderer.update(this.uTime.value);
+    this.emit({ count });
+  }
+
+  /**
+   * Emit particles with optional world-space spawn overrides.
+   * Useful for multi-emitter setups sharing one particle system.
+   */
+  emit(options: ParticleSpawnOptions = {}): void {
+    const count = Math.max(0, Math.floor(options.count ?? 20));
+    if (count <= 0) return;
+
+    const overrides = this.buildSpawnOverrides(options);
+    this.indirectRenderer.withSpawnOverrides(overrides, () => {
+      this.indirectRenderer.emitWithConfig(count, {});
+      this.indirectRenderer.update(this.uTime.value);
+    });
+    this.computePipeline.markSortUrgent(2);
+  }
+
+  private buildSpawnOverrides(options: ParticleSpawnOptions): SpawnOverrides {
+    const overrides: SpawnOverrides = {};
+
+    // Resolve emitter transform from explicit matrix or system world transform
+    if (options.matrix) {
+      options.matrix.decompose(this._tmpEmitPosition, this._tmpEmitQuaternion, this._tmpEmitScale);
+    } else {
+      this.updateWorldMatrix(true, false);
+      this.matrixWorld.decompose(this._tmpEmitPosition, this._tmpEmitQuaternion, this._tmpEmitScale);
+    }
+
+    overrides.position = (options.position ?? this._tmpEmitPosition).clone();
+
+    if (options.emitterShape) {
+      overrides.emitterShape = options.emitterShape;
+    }
+
+    const localSpaceEmitter = options.localSpaceEmitter !== false;
+    const baseEmitterSize = options.emitterSize ?? this.config.emitterSize;
+    if (baseEmitterSize) {
+      this._tmpEmitVelocityVariation.copy(baseEmitterSize);
+      if (localSpaceEmitter) {
+        this._tmpEmitVelocityVariation.multiply(this._tmpEmitScale);
+      }
+      this._tmpEmitVelocityVariation.set(
+        Math.abs(this._tmpEmitVelocityVariation.x),
+        Math.abs(this._tmpEmitVelocityVariation.y),
+        Math.abs(this._tmpEmitVelocityVariation.z)
+      );
+      overrides.emitterSize = this._tmpEmitVelocityVariation.clone();
+    }
+
+    const localSpaceVelocity = options.localSpaceVelocity !== false;
+
+    this._tmpEmitVelocity.copy(options.velocity ?? this.config.velocity ?? new THREE.Vector3(0, 1, 0));
+    if (localSpaceVelocity) {
+      this._tmpEmitVelocity.applyQuaternion(this._tmpEmitQuaternion);
+    }
+    overrides.velocity = this._tmpEmitVelocity.clone();
+
+    this._tmpEmitVelocityVariation.copy(
+      options.velocityVariation ?? this.config.velocityVariation ?? new THREE.Vector3(0.5, 0.5, 0.5)
+    );
+    if (localSpaceVelocity) {
+      this._tmpEmitVelocityVariation.applyQuaternion(this._tmpEmitQuaternion);
+      this._tmpEmitVelocityVariation.set(
+        Math.abs(this._tmpEmitVelocityVariation.x),
+        Math.abs(this._tmpEmitVelocityVariation.y),
+        Math.abs(this._tmpEmitVelocityVariation.z)
+      );
+    }
+    overrides.velocityVariation = this._tmpEmitVelocityVariation.clone();
+
+    if (options.lifetime !== undefined) {
+      overrides.lifetime = options.lifetime;
+    }
+    if (options.lifetimeVariation !== undefined) {
+      overrides.lifetimeVariation = options.lifetimeVariation;
+    }
+
+    return overrides;
   }
 
   /**
@@ -673,6 +763,14 @@ export class GPUParticleSystem extends THREE.Group {
    */
   setEmissionRate(rate: number): void {
     this.config.emissionRate = rate;
+  }
+
+  /**
+   * Set sort cadence when sorting is enabled (1 = every frame, null/undefined = auto).
+   */
+  setSortFrameInterval(interval: number | null | undefined): void {
+    this.config.sortFrameInterval = interval ?? null;
+    this.computePipeline.setSortFrameInterval(interval);
   }
 
   /**
@@ -851,13 +949,22 @@ export class GPUParticleSystem extends THREE.Group {
   /**
    * Set emitter shape configuration
    */
-  setEmitterShape(shape: 'point' | 'box' | 'sphere' | 'mesh' | 'line', size?: THREE.Vector3): void {
+  setEmitterShape(shape: EmitterShape, size?: THREE.Vector3): void {
     this.config.emitterShape = shape;
     if (size) {
       this.config.emitterSize = size;
     }
-    // Emitter shape is applied during particle spawning in compute pipeline
-    // No rebuild needed - takes effect on next particle spawn
+
+    this.indirectRenderer.setSpawnConfig({
+      emitterShape: shape,
+      emitterSize: this.config.emitterSize
+    });
+
+    this.computePipeline.setEmitterShape(shape);
+
+    if (this.config.emitterSize) {
+      this.computePipeline.setEmitterSize(this.config.emitterSize);
+    }
   }
 
   /**
@@ -933,3 +1040,15 @@ export class GPUParticleSystem extends THREE.Group {
     this.providers.forEach(provider => provider.dispose?.());
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+

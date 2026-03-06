@@ -50,7 +50,7 @@ export class AttractorProvider extends BaseProvider {
         this.uSpinAxes = uniformArray(defaultAxes);
         this.uStrengths = uniformArray(defaultStrengths);
         this.uSpinStrengths = uniformArray(defaultSpinStrengths);
-        this.uCount = uniform(0, 'uint');
+        this.uCount = uniform(0);
     }
 
     /**

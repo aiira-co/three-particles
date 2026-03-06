@@ -32,9 +32,9 @@ npm install @interverse/three-particles
 ## Quick Start
 
 ```typescript
-import * as THREE from 'three';
-import { WebGPURenderer } from 'three/webgpu';
-import { GPUParticleSystem } from '@interverse/three-particles';
+import * as THREE from "three";
+import { WebGPURenderer } from "three/webgpu";
+import { GPUParticleSystem } from "@interverse/three-particles";
 
 // Create WebGPU renderer
 const renderer = new WebGPURenderer();
@@ -43,7 +43,10 @@ document.body.appendChild(renderer.domElement);
 
 // Create scene and camera
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight);
+const camera = new THREE.PerspectiveCamera(
+  75,
+  window.innerWidth / window.innerHeight,
+);
 camera.position.z = 5;
 
 // Create particle system
@@ -51,7 +54,7 @@ const particles = new GPUParticleSystem({
   maxParticles: 10000,
   emissionRate: 500,
   lifetime: 2.0,
-  
+
   // Visual properties
   sizeStart: 0.1,
   sizeEnd: 0.02,
@@ -59,7 +62,7 @@ const particles = new GPUParticleSystem({
   colorEnd: new THREE.Color(1, 0, 0),
   opacityStart: 1.0,
   opacityEnd: 0.0,
-  
+
   // Physics
   velocity: new THREE.Vector3(0, 2, 0),
   velocityVariation: new THREE.Vector3(0.5, 0.5, 0.5),
@@ -87,33 +90,65 @@ Particle appearance properties can be updated at runtime without rebuilding the 
 
 ```typescript
 // Color
-particles.setColor(new THREE.Color(0x00ff00));        // Set both start and end
-particles.setColorStart(new THREE.Color(1, 0.5, 0));  // Just start color
-particles.setColorEnd(new THREE.Color(1, 0, 0));      // Just end color
+particles.setColor(new THREE.Color(0x00ff00)); // Set both start and end
+particles.setColorStart(new THREE.Color(1, 0.5, 0)); // Just start color
+particles.setColorEnd(new THREE.Color(1, 0, 0)); // Just end color
 
 // Size
-particles.setSize(0.2, 0.05);        // Start and end size
-particles.setSizeStart(0.3);         // Just start size
-particles.setSizeEnd(0.01);          // Just end size
+particles.setSize(0.2, 0.05); // Start and end size
+particles.setSizeStart(0.3); // Just start size
+particles.setSizeEnd(0.01); // Just end size
 
 // Opacity
-particles.setOpacity(1.0, 0.0);      // Start and end opacity
-particles.setOpacityStart(0.8);      // Just start opacity
-particles.setOpacityEnd(0.2);        // Just end opacity
+particles.setOpacity(1.0, 0.0); // Start and end opacity
+particles.setOpacityStart(0.8); // Just start opacity
+particles.setOpacityEnd(0.2); // Just end opacity
 
 // Billboard mode (v1.6.0+)
-particles.setBillboard(true);        // Particles face camera
-particles.setBillboard(false);       // Particles use geometry orientation
+particles.setBillboard(true); // Particles face camera
+particles.setBillboard(false); // Particles use geometry orientation
 
 // Geometry (v1.7.0+) - expensive operation, recreates mesh
 particles.setGeometry(new THREE.SphereGeometry(0.5, 8, 8));
 
 // Emitter Shape (v1.7.0+)
-particles.setEmitterShape('sphere', new THREE.Vector3(2, 2, 2));  // Shape + size
-particles.setEmitterShape('box');    // Just shape, keep existing size
+particles.setEmitterShape("sphere", new THREE.Vector3(2, 2, 2)); // Shape + size
+particles.setEmitterShape("box"); // Just shape, keep existing size
 ```
 
 These setters update uniforms directly (except `setGeometry` which recreates the mesh), so changes are reflected immediately.
+
+## Spawning & VFXStore (v1.8.0+)
+
+The `VFXStore` provides a centralized registry for managing multiple particle systems. It simplifies triggering bursts and passing custom spawn parameters across your application.
+
+```typescript
+import { vfxStore, GPUParticleSystem } from "@interverse/three-particles";
+
+// 1. Register a system
+const explosion = new GPUParticleSystem({
+  /* config */
+});
+vfxStore.register("explosion", explosion);
+
+// 2. Trigger bursts from anywhere
+vfxStore.burst("explosion", 50);
+
+// 3. Emit with specific overrides (world matrix, velocity, size)
+vfxStore.emit("explosion", {
+  count: 200,
+  position: new THREE.Vector3(5, 0, 5), // Override spawn position
+  velocity: new THREE.Vector3(0, 10, 0),
+  emitterShape: "sphere",
+  emitterSize: new THREE.Vector3(2, 2, 2),
+});
+
+// 4. Control playback
+vfxStore.pause("explosion");
+vfxStore.play("explosion");
+```
+
+You can also use the `.emit()` method directly on the `GPUParticleSystem` instance if you prefer not to use the store.
 
 ## Advanced Features
 
@@ -126,11 +161,11 @@ const particles = new GPUParticleSystem({
   // ... basic config
   trail: {
     enabled: true,
-    segments: 16,        // Number of history points
-    width: 0.2,          // Width relative to particle size
+    segments: 16, // Number of history points
+    width: 0.2, // Width relative to particle size
     updateInterval: 0.02, // Sampling rate (seconds)
-    fadeAlpha: true      // Fade opacity from head to tail
-  }
+    fadeAlpha: true, // Fade opacity from head to tail
+  },
 });
 ```
 
@@ -139,22 +174,22 @@ const particles = new GPUParticleSystem({
 Control properties over particle lifetime using non-linear curves.
 
 ```typescript
-import { LifetimeCurve, GradientCurve } from '@interverse/three-particles';
+import { LifetimeCurve, GradientCurve } from "@interverse/three-particles";
 
 const particles = new GPUParticleSystem({
   // Ease-out size
   sizeCurve: new LifetimeCurve([
-    { p: 0, v: 0.1 }, 
-    { p: 0.2, v: 1.0 }, 
-    { p: 1, v: 0.0 }
+    { p: 0, v: 0.1 },
+    { p: 0.2, v: 1.0 },
+    { p: 1, v: 0.0 },
   ]),
-  
+
   // Color gradient: red -> yellow -> smoke
   colorGradient: new GradientCurve([
     { t: 0, c: new THREE.Color(1, 0, 0) },
     { t: 0.5, c: new THREE.Color(1, 1, 0) },
-    { t: 1, c: new THREE.Color(0.2, 0.2, 0.2) }
-  ])
+    { t: 1, c: new THREE.Color(0.2, 0.2, 0.2) },
+  ]),
 });
 ```
 
@@ -167,10 +202,10 @@ const particles = new GPUParticleSystem({
   // Bounce off scene geometry (requires depth texture)
   depthCollisions: true,
   bounciness: 0.6,
-  
+
   // Simple floor collision
-  floorY: 0, 
-  
+  floorY: 0,
+
   // 3D Vector field for flow effects
   vectorField: myVectorFieldTexture3D,
   turbulence: 0.5,
@@ -185,11 +220,12 @@ particles.setDepthTexture(depthTexture);
 Inject your own TSL-based material for full shader control. Two approaches available:
 
 #### Option A: Material Injection
+
 Pass a pre-created material and access `particleNodes` after construction.
 
 ```typescript
-import { SpriteNodeMaterial } from 'three/webgpu';
-import { mix, color, instanceIndex } from 'three/tsl';
+import { SpriteNodeMaterial } from "three/webgpu";
+import { mix, color, instanceIndex } from "three/tsl";
 
 const customMaterial = new SpriteNodeMaterial();
 
@@ -202,27 +238,32 @@ const particles = new GPUParticleSystem({
 const { velocities, progress, speed } = particles.particleNodes;
 
 // Use helper functions for cleaner code
-customMaterial.colorNode = mix(color(0xff0000), color(0xffff00), speed().div(10));
+customMaterial.colorNode = mix(
+  color(0xff0000),
+  color(0xffff00),
+  speed().div(10),
+);
 customMaterial.opacityNode = progress().oneMinus();
 customMaterial.scaleNode = progress().oneMinus().mul(0.5);
 ```
 
 #### Option B: Material Factory (Recommended)
+
 Use `materialFactory` callback for cleaner access to particle context.
 
 ```typescript
-import { SpriteNodeMaterial } from 'three/webgpu';
-import { mix, color } from 'three/tsl';
+import { SpriteNodeMaterial } from "three/webgpu";
+import { mix, color } from "three/tsl";
 
 const particles = new GPUParticleSystem({
   materialFactory: (ctx) => {
     const mat = new SpriteNodeMaterial();
-    
+
     // ctx provides storage nodes + helper functions
     mat.colorNode = mix(color(0xff0000), color(0xffff00), ctx.speed().div(10));
     mat.opacityNode = ctx.progress().oneMinus();
     mat.scaleNode = ctx.progress().oneMinus().mul(0.5);
-    
+
     return mat;
   },
   // ... other config
@@ -230,6 +271,7 @@ const particles = new GPUParticleSystem({
 ```
 
 **ParticleMaterialContext properties:**
+
 - `positions`, `velocities`, `ages`, `lifetimes`, `rotations`, `colors`, `styles` - Storage nodes
 - `time`, `delta` - Uniforms
 - `index` - Instance index node
@@ -245,24 +287,24 @@ const particles = new GPUParticleSystem({
 Create particles with multiple visual styles (e.g., fire + smoke) in a single emitter.
 
 ```typescript
-import { SpriteNodeMaterial } from 'three/webgpu';
-import { mix, color } from 'three/tsl';
+import { SpriteNodeMaterial } from "three/webgpu";
+import { mix, color } from "three/tsl";
 
 const particles = new GPUParticleSystem({
   styles: [
-    { name: 'fire', weight: 3, color: new THREE.Color(0xff3300) },
-    { name: 'smoke', weight: 1, color: new THREE.Color(0x333333) }
+    { name: "fire", weight: 3, color: new THREE.Color(0xff3300) },
+    { name: "smoke", weight: 1, color: new THREE.Color(0x333333) },
   ],
   materialFactory: (ctx) => {
     const mat = new SpriteNodeMaterial();
-    
+
     // ctx.isStyle(0) returns 1 for fire, 0 for smoke
     const isFire = ctx.isStyle(0);
     mat.colorNode = mix(color(0x333333), color(0xff3300), isFire);
     mat.opacityNode = ctx.progress().oneMinus();
-    
+
     return mat;
-  }
+  },
 });
 ```
 
@@ -275,42 +317,46 @@ Providers extend particle behavior with modular forces and effects. Add multiple
 ### Using Providers
 
 ```typescript
-import { 
-  GPUParticleSystem, 
-  AttractorProvider, 
+import {
+  GPUParticleSystem,
+  AttractorProvider,
   TurbulenceProvider,
-  BoidsProvider 
-} from '@interverse/three-particles';
+  BoidsProvider,
+} from "@interverse/three-particles";
 
-const particles = new GPUParticleSystem({ /* config */ });
+const particles = new GPUParticleSystem({
+  /* config */
+});
 
 // Add attractor force field
 const attractor = new AttractorProvider(4); // max 4 attractors
-attractor.addAttractor({ 
-  position: new THREE.Vector3(0, 2, 0), 
-  strength: 5 
+attractor.addAttractor({
+  position: new THREE.Vector3(0, 2, 0),
+  strength: 5,
 });
 particles.addProvider(attractor);
 
 // Add turbulence for organic motion
-particles.addProvider(new TurbulenceProvider({ 
-  frequency: 0.5, 
-  amplitude: 1.0 
-}));
+particles.addProvider(
+  new TurbulenceProvider({
+    frequency: 0.5,
+    amplitude: 1.0,
+  }),
+);
 ```
 
 ### Available Providers
 
-| Provider | Description |
-|----------|-------------|
-| **AttractorProvider** | Point/area attraction with optional spin |
-| **BoidsProvider** | Flocking behavior ([Reynolds' Boids](https://www.red3d.com/cwr/boids/)) |
-| **TurbulenceProvider** | Noise-based turbulent motion |
-| **VortexProvider** | Spiral/vortex swirling forces |
-| **WindProvider** | Directional wind with gusts |
-| **PathProvider** | Guide particles along curves |
-| **MouseInteractionProvider** | Mouse/touch push/pull interaction |
-| **DepthCollisionProvider** | Bounce off scene geometry |
+| Provider                     | Description                                                             |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| **AttractorProvider**        | Point/area attraction with optional spin                                |
+| **BoidsProvider**            | Flocking behavior ([Reynolds' Boids](https://www.red3d.com/cwr/boids/)) |
+| **TurbulenceProvider**       | Noise-based turbulent motion                                            |
+| **VortexProvider**           | Spiral/vortex swirling forces                                           |
+| **WindProvider**             | Directional wind with gusts                                             |
+| **PathProvider**             | Guide particles along curves                                            |
+| **MouseInteractionProvider** | Mouse/touch push/pull interaction                                       |
+| **DepthCollisionProvider**   | Bounce off scene geometry                                               |
 
 ---
 
@@ -319,14 +365,14 @@ particles.addProvider(new TurbulenceProvider({
 Creates gravitational/magnetic point attractors that pull particles.
 
 ```typescript
-import { AttractorProvider } from '@interverse/three-particles';
+import { AttractorProvider } from "@interverse/three-particles";
 
 const attractor = new AttractorProvider(8); // max 8 attractors
 
 // Simple gravity point
 attractor.addAttractor({
   position: new THREE.Vector3(0, 5, 0),
-  strength: 10
+  strength: 10,
 });
 
 // Spinning attractor (vortex-like)
@@ -334,7 +380,7 @@ attractor.addAttractor({
   position: new THREE.Vector3(3, 0, 0),
   strength: 5,
   spinAxis: new THREE.Vector3(0, 1, 0),
-  spinStrength: 2.0
+  spinStrength: 2.0,
 });
 
 // Update attractor position at runtime
@@ -344,6 +390,7 @@ particles.addProvider(attractor);
 ```
 
 **AttractorConfig:**
+
 - `position: Vector3` - Attractor world position
 - `strength: number` - Pull force (higher = stronger)
 - `spinAxis?: Vector3` - Axis for orbital spin
@@ -357,32 +404,32 @@ particles.addProvider(attractor);
 Implements Craig Reynolds' [flocking algorithm](https://www.red3d.com/cwr/boids/) with three core rules: separation, alignment, and cohesion. Enhanced with goal seeking and boundary avoidance.
 
 ```typescript
-import { BoidsProvider } from '@interverse/three-particles';
+import { BoidsProvider } from "@interverse/three-particles";
 
 const boids = new BoidsProvider({
   // Core Reynolds' rules
-  separationWeight: 1.5,  // Avoid crowding
-  alignmentWeight: 1.0,   // Match neighbor velocity
-  cohesionWeight: 1.2,    // Move toward flock center
-  
+  separationWeight: 1.5, // Avoid crowding
+  alignmentWeight: 1.0, // Match neighbor velocity
+  cohesionWeight: 1.2, // Move toward flock center
+
   // Perception
-  neighborRadius: 2.5,    // How far to look for neighbors
-  separationRadius: 1.0,  // Personal space radius
-  
+  neighborRadius: 2.5, // How far to look for neighbors
+  separationRadius: 1.0, // Personal space radius
+
   // Movement limits
   maxSpeed: 5.0,
-  maxForce: 1.0,          // Max steering force
-  
+  maxForce: 1.0, // Max steering force
+
   // Containment
-  boundSize: 10,          // Soft boundary size
-  boundaryForce: 2.0,     // Edge avoidance strength
-  
+  boundSize: 10, // Soft boundary size
+  boundaryForce: 2.0, // Edge avoidance strength
+
   // Optional goal seeking (for scripted paths)
   goalPosition: new THREE.Vector3(5, 0, 0),
   goalWeight: 0.5,
-  
+
   // Organic randomness
-  wanderStrength: 0.3
+  wanderStrength: 0.3,
 });
 
 // Adjust at runtime
@@ -393,6 +440,7 @@ particles.addProvider(boids);
 ```
 
 **BoidsConfig:**
+
 - `separationWeight?: number` - Avoid crowding neighbors
 - `alignmentWeight?: number` - Steer toward average heading
 - `cohesionWeight?: number` - Steer toward average position
@@ -413,7 +461,7 @@ particles.addProvider(boids);
 Physics-based turbulent forces following [fluid dynamics principles](https://journals.aps.org/prresearch/abstract/10.1103/PhysRevResearch.6.L012013). Implements Kolmogorov's energy cascade and Reynolds number effects.
 
 ```typescript
-import { TurbulenceProvider } from '@interverse/three-particles';
+import { TurbulenceProvider } from "@interverse/three-particles";
 
 const turbulence = new TurbulenceProvider({
   // Base turbulence
@@ -421,16 +469,16 @@ const turbulence = new TurbulenceProvider({
   amplitude: 1.0,
   octaves: 3,
   friction: 0.02,
-  
+
   // Physics enhancements
-  velocitySensitivity: 0.3,   // More turbulence at higher speeds
-  intermittency: 0.4,         // Puff-like variation over time
+  velocitySensitivity: 0.3, // More turbulence at higher speeds
+  intermittency: 0.4, // Puff-like variation over time
   intermittencyFrequency: 0.5,
-  kolmogorovScaling: 0.7,     // Follow -5/3 energy law
-  
+  kolmogorovScaling: 0.7, // Follow -5/3 energy law
+
   // Wake effect
   flowDirection: new THREE.Vector3(1, 0, 0),
-  wakeIntensity: 0.5          // Stronger behind flow
+  wakeIntensity: 0.5, // Stronger behind flow
 });
 
 // Adjust at runtime
@@ -441,6 +489,7 @@ particles.addProvider(turbulence);
 ```
 
 **TurbulenceConfig:**
+
 - `frequency?: number` - Noise spatial frequency
 - `amplitude?: number` - Force strength
 - `octaves?: number` - Noise layers (1-4)
@@ -459,14 +508,14 @@ particles.addProvider(turbulence);
 Creates a swirling vortex that pulls particles while spinning them around an axis.
 
 ```typescript
-import { VortexProvider } from '@interverse/three-particles';
+import { VortexProvider } from "@interverse/three-particles";
 
 const vortex = new VortexProvider({
   center: new THREE.Vector3(0, 0, 0),
-  axis: new THREE.Vector3(0, 1, 0),  // Spin around Y
-  strength: 2.0,      // Spin force
-  pullStrength: 0.5,  // Pull toward center
-  radius: 8.0         // Effect radius
+  axis: new THREE.Vector3(0, 1, 0), // Spin around Y
+  strength: 2.0, // Spin force
+  pullStrength: 0.5, // Pull toward center
+  radius: 8.0, // Effect radius
 });
 
 // Move vortex at runtime
@@ -477,6 +526,7 @@ particles.addProvider(vortex);
 ```
 
 **VortexConfig:**
+
 - `center?: Vector3` - Vortex center position
 - `axis?: Vector3` - Rotation axis (normalized)
 - `strength?: number` - Spinning force
@@ -490,12 +540,12 @@ particles.addProvider(vortex);
 Enables mouse/touch interaction to push or pull particles.
 
 ```typescript
-import { MouseInteractionProvider } from '@interverse/three-particles';
+import { MouseInteractionProvider } from "@interverse/three-particles";
 
 const mouse = new MouseInteractionProvider({
   strength: 5.0,
   radius: 3.0,
-  push: true  // false = pull particles
+  push: true, // false = pull particles
 });
 
 particles.addProvider(mouse);
@@ -511,15 +561,15 @@ mouse.setMousePosition(mouseWorldPos);
 Applies directional wind forces with gusts and turbulence for natural outdoor effects.
 
 ```typescript
-import { WindProvider } from '@interverse/three-particles';
+import { WindProvider } from "@interverse/three-particles";
 
 const wind = new WindProvider({
-  direction: new THREE.Vector3(1, 0, 0.2),  // Wind direction
-  strength: 2.0,         // Base force
-  gustStrength: 1.5,     // Extra burst force
-  gustFrequency: 0.3,    // Gusts per second
-  turbulence: 0.3,       // Random variation
-  heightFactor: 0.1      // Stronger wind at higher Y
+  direction: new THREE.Vector3(1, 0, 0.2), // Wind direction
+  strength: 2.0, // Base force
+  gustStrength: 1.5, // Extra burst force
+  gustFrequency: 0.3, // Gusts per second
+  turbulence: 0.3, // Random variation
+  heightFactor: 0.1, // Stronger wind at higher Y
 });
 
 // Change wind direction at runtime
@@ -530,6 +580,7 @@ particles.addProvider(wind);
 ```
 
 **WindConfig:**
+
 - `direction?: Vector3` - Wind direction (normalized)
 - `strength?: number` - Base wind force
 - `gustStrength?: number` - Additional burst force
@@ -544,19 +595,19 @@ particles.addProvider(wind);
 Guides particles along a predefined path with attraction and alignment forces.
 
 ```typescript
-import { PathProvider } from '@interverse/three-particles';
+import { PathProvider } from "@interverse/three-particles";
 
 const path = new PathProvider({
   pathPoints: [
     new THREE.Vector3(-5, 0, 0),
     new THREE.Vector3(0, 4, 2),
     new THREE.Vector3(5, 1, -1),
-    new THREE.Vector3(8, 0, 0)
+    new THREE.Vector3(8, 0, 0),
   ],
-  attraction: 2.0,   // Pull toward path
-  alignment: 1.5,    // Push along path direction
-  spread: 1.0,       // Max distance from path
-  speed: 1.0
+  attraction: 2.0, // Pull toward path
+  alignment: 1.5, // Push along path direction
+  spread: 1.0, // Max distance from path
+  speed: 1.0,
 });
 
 // Update path at runtime
@@ -566,6 +617,7 @@ particles.addProvider(path);
 ```
 
 **PathConfig:**
+
 - `pathPoints?: Vector3[]` - Path control points (min 2)
 - `attraction?: number` - Force pulling toward path
 - `alignment?: number` - Force pushing along path
@@ -580,11 +632,11 @@ particles.addProvider(path);
 Extend `BaseProvider` to create custom force behaviors:
 
 ```typescript
-import { BaseProvider, ProviderContext } from '@interverse/three-particles';
-import { vec3, Fn } from 'three/tsl';
+import { BaseProvider, ProviderContext } from "@interverse/three-particles";
+import { vec3, Fn } from "three/tsl";
 
 class WindProvider extends BaseProvider {
-  name = 'WindProvider';
+  name = "WindProvider";
   priority = 30;
 
   getForceNode(ctx: ProviderContext) {
@@ -603,20 +655,20 @@ class WindProvider extends BaseProvider {
 ```typescript
 interface GPUParticleSystemConfig {
   // Core
-  maxParticles?: number;      // Default: 100000
-  emissionRate?: number;      // Particles per second
-  lifetime?: number;          // Particle lifetime in seconds
-  loop?: boolean;             // Continuous emission
-  
+  maxParticles?: number; // Default: 100000
+  emissionRate?: number; // Particles per second
+  lifetime?: number; // Particle lifetime in seconds
+  loop?: boolean; // Continuous emission
+
   // Geometry
-  particleGeometry?: THREE.BufferGeometry;  // Custom geometry
-  billboard?: boolean;        // Face camera (default: true)
-  
+  particleGeometry?: THREE.BufferGeometry; // Custom geometry
+  billboard?: boolean; // Face camera (default: true)
+
   // Emitter Shape
-  emitterShape?: 'point' | 'box' | 'sphere' | 'mesh' | 'line';
+  emitterShape?: "point" | "box" | "sphere" | "mesh" | "line";
   emitterSize?: THREE.Vector3;
-  emitterMesh?: THREE.Mesh;   // Emit from surface of mesh
-  
+  emitterMesh?: THREE.Mesh; // Emit from surface of mesh
+
   // Visual
   texture?: THREE.Texture;
   textureSheet?: TextureSheetConfig; // Sprite sheet config
@@ -626,12 +678,12 @@ interface GPUParticleSystemConfig {
   sizeEnd?: number;
   opacityStart?: number;
   opacityEnd?: number;
-  
+
   // Curves
   sizeCurve?: LifetimeCurve | CurvePreset;
   opacityCurve?: LifetimeCurve | CurvePreset;
   colorGradient?: GradientCurve;
-  
+
   // Physics
   velocity?: THREE.Vector3;
   velocityVariation?: THREE.Vector3;
@@ -639,21 +691,21 @@ interface GPUParticleSystemConfig {
   drag?: number;
   turbulence?: number;
   vectorField?: THREE.Data3DTexture;
-  
+
   // Trails
   trail?: TrailConfig;
-  
+
   // Collisions
   depthCollisions?: boolean;
   bounciness?: number;
   floorY?: number;
-  
+
   // Quality
-  sorted?: boolean;           // Back-to-front sorting
-  softParticles?: boolean;    // Depth-aware fading
-  softness?: number;          // Soft edge distance
-  frustumCulled?: boolean;    // GPU frustum culling
-  
+  sorted?: boolean; // Back-to-front sorting
+  softParticles?: boolean; // Depth-aware fading
+  softness?: number; // Soft edge distance
+  frustumCulled?: boolean; // GPU frustum culling
+
   // LOD
   lod?: LODConfig[];
 }
@@ -669,12 +721,12 @@ interface GPUParticleSystemConfig {
 
 ## Browser Support
 
-| Browser | Status |
-|---------|--------|
-| Chrome 113+ | ✅ Full support |
-| Edge 113+ | ✅ Full support |
+| Browser         | Status                                        |
+| --------------- | --------------------------------------------- |
+| Chrome 113+     | ✅ Full support                               |
+| Edge 113+       | ✅ Full support                               |
 | Firefox Nightly | ⚠️ Experimental (enable `dom.webgpu.enabled`) |
-| Safari 18+ | ⚠️ Experimental |
+| Safari 18+      | ⚠️ Experimental                               |
 
 ## License
 

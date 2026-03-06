@@ -1,55 +1,55 @@
 {
-    "name": "@interverse/three-particles",
-    "version": "1.7.0",
-    "description": "AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like features",
-    "type": "module",
-    "main": "dist/index.js",
-    "module": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js",
-            "default": "./dist/index.js"
-        }
-    },
-    "files": [
-        "dist",
-        "README.md",
-        "LICENSE"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "clean": "rimraf dist",
-        "prepublishOnly": "yarn clean && yarn build"
-    },
-    "keywords": [
-        "three",
-        "threejs",
-        "particles",
-        "gpu",
-        "webgpu",
-        "vfx",
-        "visual-effects",
-        "niagara",
-        "vfx-graph"
-    ],
-    "author": "Interverse Engine",
-    "license": "MIT",
-    "peerDependencies": {
-        "three": ">=0.182.0"
-    },
-    "devDependencies": {
-        "@types/three": "^0.182.0",
-        "rimraf": "^5.0.0",
-        "typescript": "^5.3.0"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/aiira-co/three-particles.git"
-    },
-    "bugs": {
-        "url": "https://github.com/aiira-co/three-particles/issues"
-    },
-    "homepage": "https://github.com/aiira-co/three-particles#readme"
+  "name": "@interverse/three-particles",
+  "version": "1.8.0",
+  "description": "AAA-quality GPU particle system for Three.js with Niagara/Unity VFX Graph-like features",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "prepublishOnly": "yarn clean && yarn build"
+  },
+  "keywords": [
+    "three",
+    "threejs",
+    "particles",
+    "gpu",
+    "webgpu",
+    "vfx",
+    "visual-effects",
+    "niagara",
+    "vfx-graph"
+  ],
+  "author": "Interverse Engine",
+  "license": "MIT",
+  "peerDependencies": {
+    "three": ">=0.183.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.183.1",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiira-co/three-particles.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aiira-co/three-particles/issues"
+  },
+  "homepage": "https://github.com/aiira-co/three-particles#readme"
 }
