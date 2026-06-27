@@ -192,26 +192,27 @@ export class GPUSorter {
     const useBufferA = this.uUseBufferA;
 
     const computeFn = Fn(() => {
-      const i = instanceIndex;
+      const i = instanceIndex as any;
+      const useA = (useBufferA as any).equal(int(1));
 
       // Calculate partner index using XOR
-      const partner = i.bitXor(stepSize);
+      const partner = i.bitXor(stepSize as any);
 
       // Only process if partner is greater (avoid duplicate swaps)
       If(partner.greaterThan(i), () => {
         // Determine sort direction for this section
         // Elements in first half of each bitonically sorted section should be ascending
-        const sectionMask = stageSize.sub(int(1));
+        const sectionMask = (stageSize as any).sub(int(1));
         const indexInSection = i.bitAnd(sectionMask);
-        const halfSection = stageSize.div(int(2));
+        const halfSection = (stageSize as any).div(int(2));
         const ascending = indexInSection.lessThan(halfSection);
 
         // Read indices from appropriate buffer
-        const idxI = useBufferA.equal(int(1)).select(
+        const idxI = useA.select(
           indicesA.element(i),
           indicesB.element(i)
         );
-        const idxPartner = useBufferA.equal(int(1)).select(
+        const idxPartner = useA.select(
           indicesA.element(partner),
           indicesB.element(partner)
         );
@@ -230,7 +231,7 @@ export class GPUSorter {
         const outI = needsSwap.select(idxPartner, idxI);
         const outPartner = needsSwap.select(idxI, idxPartner);
 
-        If(useBufferA.equal(int(1)), () => {
+        If(useA, () => {
           indicesB.element(i).assign(outI);
           indicesB.element(partner).assign(outPartner);
         }).Else(() => {
@@ -239,12 +240,12 @@ export class GPUSorter {
         });
       }).Else(() => {
         // Partner is less than us, just copy without change
-        const idx = useBufferA.equal(int(1)).select(
+        const idx = useA.select(
           indicesA.element(i),
           indicesB.element(i)
         );
 
-        If(useBufferA.equal(int(1)), () => {
+        If(useA, () => {
           indicesB.element(i).assign(idx);
         }).Else(() => {
           indicesA.element(i).assign(idx);

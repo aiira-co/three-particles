@@ -252,7 +252,7 @@ export class TrailRenderer {
         }
 
         return Fn(() => {
-            const particleIdx = instanceIndex;
+            const particleIdx = instanceIndex as any;
 
             // Get current particle position from main system
             const currentPos = particlePositionsNode.element(particleIdx);
@@ -261,7 +261,7 @@ export class TrailRenderer {
             const headIdx = trailHeadIndicesNode.element(particleIdx);
 
             // Move head forward: (head + 1) % segments
-            const newHeadIdx = headIdx.add(1).mod(float(segments));
+            const newHeadIdx = (headIdx as any).add(1).mod(float(segments) as any);
 
             // Save new position at new head
             const storageIdx = particleIdx.mul(float(segments)).add(newHeadIdx).toInt();

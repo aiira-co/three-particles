@@ -178,7 +178,7 @@ export class ComputePipeline {
     const maxParticles = float(this.storageManager.maxParticles);
 
     const computeFn = Fn(() => {
-      const i = instanceIndex;
+      const i = instanceIndex as any;
 
       // Load current particle state
       const pos = positions.element(i);
@@ -190,7 +190,7 @@ export class ComputePipeline {
       const age = time.sub(spawnTime);
 
       // Check if this particle should be SPAWNED this frame
-      const indexInSpawnRange = i.sub(spawnOffset.toInt()).mod(maxParticles.toInt());
+      const indexInSpawnRange = i.sub(spawnOffset.toInt() as any).mod(maxParticles.toInt() as any);
       const shouldSpawn = indexInSpawnRange.lessThan(spawnCount.toInt());
 
       If(shouldSpawn, () => {
@@ -455,5 +455,4 @@ export class ComputePipeline {
     this.features.clear();
   }
 }
-
 

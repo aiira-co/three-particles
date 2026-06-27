@@ -172,8 +172,9 @@ export class ParticleTrails {
             const color = vec4(1.0, 0.8, 0.5, 1.0); // Base color
 
             Loop(4, ({ i: vertIdx }) => {
-                linksColors.element(link1Base.add(vertIdx)).assign(vec4(color.x, color.y, color.z, alpha1));
-                linksColors.element(link2Base.add(vertIdx)).assign(vec4(color.x, color.y, color.z, alpha2));
+                const vertexIndex = vertIdx as any;
+                linksColors.element(link1Base.add(vertexIndex)).assign(vec4(color.x, color.y, color.z, alpha1));
+                linksColors.element(link2Base.add(vertexIndex)).assign(vec4(color.x, color.y, color.z, alpha2));
             });
 
         })().compute(maxParticles);

@@ -467,8 +467,8 @@ export class GPUParticleSystem extends THREE.Group {
         // Simple start/end color with easing
         const colorEase = smoothstep(float(0), float(1), progress);
         color = mix(
-          vec3(this.uColorStart),
-          vec3(this.uColorEnd),
+          this.uColorStart.xyz,
+          this.uColorEnd.xyz,
           colorEase
         );
 
