@@ -14,6 +14,24 @@ import {
  * Performs back-to-front sorting entirely on GPU using TSL compute shaders.
  */
 export class GPUSorter {
+  /**
+   * Sort key for a padding slot, i.e. an index past `maxParticles`.
+   *
+   * The sort key of a live particle is `-distanceSquared`, so it is always <= 0 and
+   * the array ends up ascending: most negative (farthest) first, which is the
+   * back-to-front order alpha blending needs. Padding must therefore land *after*
+   * every live particle, and any positive value achieves that - if a padding slot
+   * sorted to the front it would displace a live particle out of the drawn range.
+   *
+   * The value must not be `Infinity`. three's WGSL generator formats a float literal
+   * as `value + ( value % 1 ? '' : '.0' )` unless its string form contains an `e`;
+   * `Infinity % 1` is `NaN`, so `float( Infinity )` emitted the literal `Infinity.0`
+   * and every sort shader failed to compile. 1e30 stringifies to `1e+30` -> `1e30`,
+   * a valid WGSL literal, and sits far above any plausible squared distance while
+   * staying well inside f32 range.
+   */
+  private static readonly PADDING_SORT_KEY = 1e30;
+
   private maxParticles: number;
   private paddedSize: number;
 
@@ -29,13 +47,21 @@ export class GPUSorter {
 
   // Compute nodes
   private distanceComputeNode: ComputeNode | null = null;
-  private bitonicPassNodes: Map<string, ComputeNode> = new Map();
+  /**
+   * Every bitonic pass is the same shader; only the uniforms below differ, so one
+   * node is reused for all of them. This previously cached one node per
+   * (stage, step) pair - 153 structurally identical pipelines at maxParticles
+   * 100000 - which all shared these same uniform objects anyway.
+   */
+  private bitonicPassNode: ComputeNode | null = null;
 
   // Uniforms
   private uCameraPos = uniform(new THREE.Vector3());
-  private uStageSize = uniform(0);
-  private uStepSize = uniform(0);
-  private uUseBufferA = uniform(1); // 1 = read from A, write to B
+  // These feed bitwise operators against instanceIndex, which is a uint. Declared
+  // as floats they were the wrong operand type for bitXor/bitAnd entirely.
+  private uStageSize = uniform(0, 'uint');
+  private uStepSize = uniform(0, 'uint');
+  private uUseBufferA = uniform(1, 'uint'); // 1 = read from A, write to B
 
   // External position buffer reference
   private positionsStorage: any = null;
@@ -59,10 +85,13 @@ export class GPUSorter {
       indicesArrayB[i] = i < maxParticles ? i : 0xFFFFFFFF;
     }
 
-    // Initialize distance buffer with max values for dead particles
+    // Seed the distance buffer using the same convention as the distance compute
+    // shader below, which overwrites every element on each sort. This seed only
+    // matters if something reads the buffer before the first sort runs; it was
+    // previously -Infinity, i.e. the opposite end from where padding belongs.
     const distArray = this.distanceBuffer.array as Float32Array;
     for (let i = 0; i < this.paddedSize; i++) {
-      distArray[i] = i < maxParticles ? 0 : -Infinity; // Dead particles sorted to back
+      distArray[i] = i < maxParticles ? 0 : GPUSorter.PADDING_SORT_KEY;
     }
 
     // Create TSL storage accessors
@@ -130,12 +159,12 @@ export class GPUSorter {
       If(i.lessThan(uint(maxParticles)), () => {
         const pos = positions.element(i);
         const diff = pos.sub(camPos);
-        // Store squared distance (negative for back-to-front = descending)
+        // Negated so that ascending order puts the farthest particle first.
         const distSq = diff.dot(diff);
         distances.element(i).assign(distSq.negate());
       }).Else(() => {
-        // Dead particles get pushed to front (will be culled anyway)
-        distances.element(i).assign(float(Infinity));
+        // Padding slots sort after every live particle. See PADDING_SORT_KEY.
+        distances.element(i).assign(float(GPUSorter.PADDING_SORT_KEY));
       });
     });
 
@@ -163,16 +192,11 @@ export class GPUSorter {
         this.uStepSize.value = stepSize;
         this.uUseBufferA.value = useBufferA ? 1 : 0;
 
-        // Get or create compute node for this pass
-        const passKey = `${stage}_${step}`;
-        let passNode = this.bitonicPassNodes.get(passKey);
-
-        if (!passNode) {
-          passNode = this.buildBitonicPassNode();
-          this.bitonicPassNodes.set(passKey, passNode);
+        if (!this.bitonicPassNode) {
+          this.bitonicPassNode = this.buildBitonicPassNode();
         }
 
-        renderer.computeAsync(passNode);
+        renderer.computeAsync(this.bitonicPassNode);
 
         // Swap buffers
         useBufferA = !useBufferA;
@@ -182,6 +206,22 @@ export class GPUSorter {
 
   /**
    * Build a single bitonic sort pass compute shader
+   */
+  /**
+   * One compare-exchange pass of the bitonic sort.
+   *
+   * Every invocation writes exactly one slot - its own. The previous version had
+   * the lower thread of each pair write *both* `out[i]` and `out[partner]` while
+   * the upper thread also wrote `out[partner]` from its Else branch, so two
+   * invocations raced on the same slot and the result was not even a permutation
+   * (indices came back duplicated, e.g. [0,1,3,3,7,7,7,7,15,...]).
+   *
+   * The sort direction also has to be identical for both members of a pair, which
+   * means testing the stage bit itself (`i & stageSize`) and not a bit inside the
+   * block. The old `(i & (stageSize - 1)) < stageSize / 2` tests the
+   * `stageSize / 2` bit, which is exactly the bit `partner = i ^ stepSize` flips on
+   * the first step of every stage - so the two halves of a pair disagreed on
+   * direction and sorted against each other.
    */
   private buildBitonicPassNode(): ComputeNode {
     const distanceStorage = this.distanceStorage;
@@ -193,63 +233,36 @@ export class GPUSorter {
 
     const computeFn = Fn(() => {
       const i = instanceIndex as any;
-      const useA = (useBufferA as any).equal(int(1));
+      const useA = (useBufferA as any).equal(uint(1));
 
-      // Calculate partner index using XOR
       const partner = i.bitXor(stepSize as any);
 
-      // Only process if partner is greater (avoid duplicate swaps)
-      If(partner.greaterThan(i), () => {
-        // Determine sort direction for this section
-        // Elements in first half of each bitonically sorted section should be ascending
-        const sectionMask = (stageSize as any).sub(int(1));
-        const indexInSection = i.bitAnd(sectionMask);
-        const halfSection = (stageSize as any).div(int(2));
-        const ascending = indexInSection.lessThan(halfSection);
+      // Same for both members of the pair: stepSize < stageSize, so XOR cannot
+      // flip the stageSize bit.
+      const ascending = i.bitAnd(stageSize as any).equal(uint(0));
 
-        // Read indices from appropriate buffer
-        const idxI = useA.select(
-          indicesA.element(i),
-          indicesB.element(i)
-        );
-        const idxPartner = useA.select(
-          indicesA.element(partner),
-          indicesB.element(partner)
-        );
+      // `i` is the lower half of the pair.
+      const isLow = partner.greaterThan(i);
 
-        // Get distances
-        const distI = distanceStorage.element(idxI);
-        const distPartner = distanceStorage.element(idxPartner);
+      const mine = useA.select(indicesA.element(i), indicesB.element(i));
+      const theirs = useA.select(indicesA.element(partner), indicesB.element(partner));
 
-        // Determine if swap is needed
-        const needsSwap = ascending.select(
-          distI.greaterThan(distPartner), // Ascending: swap if i > partner
-          distI.lessThan(distPartner)     // Descending: swap if i < partner
-        );
+      const distMine = distanceStorage.element(mine);
+      const distTheirs = distanceStorage.element(theirs);
 
-        // Write to other buffer with potential swap
-        const outI = needsSwap.select(idxPartner, idxI);
-        const outPartner = needsSwap.select(idxI, idxPartner);
+      // An ascending pair puts the smaller key in the lower slot; a descending pair
+      // puts it in the upper slot. Each thread decides only about its own slot.
+      const wantSmaller = ascending.select(isLow, isLow.not());
+      const takeTheirs = wantSmaller.select(
+        distTheirs.lessThan(distMine),
+        distTheirs.greaterThan(distMine)
+      );
+      const result = takeTheirs.select(theirs, mine);
 
-        If(useA, () => {
-          indicesB.element(i).assign(outI);
-          indicesB.element(partner).assign(outPartner);
-        }).Else(() => {
-          indicesA.element(i).assign(outI);
-          indicesA.element(partner).assign(outPartner);
-        });
+      If(useA, () => {
+        indicesB.element(i).assign(result);
       }).Else(() => {
-        // Partner is less than us, just copy without change
-        const idx = useA.select(
-          indicesA.element(i),
-          indicesB.element(i)
-        );
-
-        If(useA, () => {
-          indicesB.element(i).assign(idx);
-        }).Else(() => {
-          indicesA.element(i).assign(idx);
-        });
+        indicesA.element(i).assign(result);
       });
     });
 
@@ -291,6 +304,6 @@ export class GPUSorter {
 
   dispose(): void {
     this.distanceComputeNode = null;
-    this.bitonicPassNodes.clear();
+    this.bitonicPassNode = null;
   }
 }

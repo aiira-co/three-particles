@@ -23,7 +23,7 @@ import { GradientCurve } from '../curves/GradientCurve.js';
 import { TrailRenderer } from './TrailRenderer.js';
 
 export class GPUParticleSystem extends THREE.Group {
-  public mesh: THREE.InstancedMesh;
+  public mesh: THREE.Mesh;
   public stats: ParticleStats;
 
   /** Particle data nodes for custom materials.
@@ -145,6 +145,14 @@ export class GPUParticleSystem extends THREE.Group {
     this.storageManager = new StorageManager(maxParticles);
     this.indirectRenderer = new IndirectRenderer(this.storageManager);
 
+    // Created here rather than in initializeFeatures() because every shader node
+    // built below has to index particle data through the sorted index buffer, and
+    // the material graph is built before initializeFeatures() would have run.
+    // initializeFeatures() still wires it into the compute pipeline.
+    if (this.config.sorted) {
+      this.sorter = new GPUSorter(maxParticles);
+    }
+
     // Create TSL storage nodes wrapping StorageManager buffers
     // This enables both CPU writes (for bursts) and GPU compute access (for physics)
     // Using storage() instead of instancedArray() is the standard Three.js pattern
@@ -163,6 +171,9 @@ export class GPUParticleSystem extends THREE.Group {
     const lifetimesNode = this.lifetimesNode;
     const timeUniform = this.uTime;
     const styleCount = this.config.styles?.length ?? 1;
+    // Resolved lazily: with sorting enabled this reads the sorted index buffer, and
+    // custom materials must use the same index the built-in shaders do.
+    const particleIndex = () => this.particleIndex();
 
     this.particleNodes = {
       positions: posNode,
@@ -174,25 +185,26 @@ export class GPUParticleSystem extends THREE.Group {
       styles: stylesNode,
       time: timeUniform,
       delta: this.uDelta,
-      index: instanceIndex,
+      get index() { return particleIndex(); },
 
       // Helper functions that return computed TSL nodes
       progress: () => {
-        const age = timeUniform.sub(agesNode.element(instanceIndex));
-        const lifetime = lifetimesNode.element(instanceIndex);
+        const index = particleIndex();
+        const age = timeUniform.sub(agesNode.element(index));
+        const lifetime = lifetimesNode.element(index);
         return age.div(lifetime).clamp(0, 1);
       },
       speed: () => {
-        return tslLength(velNode.element(instanceIndex));
+        return tslLength(velNode.element(particleIndex()));
       },
       direction: () => {
-        return tslNormalize(velNode.element(instanceIndex));
+        return tslNormalize(velNode.element(particleIndex()));
       },
       styleIndex: () => {
-        return stylesNode.element(instanceIndex);
+        return stylesNode.element(particleIndex());
       },
       isStyle: (idx: number) => {
-        return stylesNode.element(instanceIndex).equal(float(idx));
+        return stylesNode.element(particleIndex()).equal(float(idx));
       },
       styleCount
     };
@@ -288,9 +300,8 @@ export class GPUParticleSystem extends THREE.Group {
   }
 
   private initializeFeatures(): void {
-    // Sorting
-    if (this.config.sorted) {
-      this.sorter = new GPUSorter(this.storageManager.maxParticles);
+    // Sorting - the sorter itself is constructed in the constructor, see there.
+    if (this.sorter) {
       this.computePipeline.addSorter(this.sorter);
       this.computePipeline.setSortFrameInterval(this.config.sortFrameInterval);
     }
@@ -336,17 +347,49 @@ export class GPUParticleSystem extends THREE.Group {
     return curve;
   }
 
-  private createMesh(): THREE.InstancedMesh {
-    const geometry = this.config.particleGeometry || new THREE.PlaneGeometry(1, 1);
+  /**
+   * Wraps the particle geometry so the draw call can carry an instance count without
+   * carrying an `instanceMatrix`.
+   *
+   * `THREE.InstancedMesh` allocates one mat4 per instance, and three's node material
+   * binds that whole array as a *uniform* buffer in the vertex stage
+   * (`InstanceNode` -> `buffer( instanceMatrix.array, 'mat4', ... )`). A uniform buffer
+   * binding is capped at 65536 bytes, i.e. 1024 mat4s, so every system with
+   * `maxParticles > 1024` - including the 100000 default of `applyDefaults()` - failed
+   * WebGPU validation and rendered nothing at all.
+   *
+   * The matrix was never read: every particle transform comes from
+   * `material.positionNode` sampling the `positions` storage buffer by `instanceIndex`,
+   * and `NodeMaterial.setupPosition()` overwrites the instanced transform with
+   * `positionNode` regardless. A plain `THREE.Mesh` carrying an
+   * `InstancedBufferGeometry` issues the identical instanced draw - three reads
+   * `geometry.instanceCount` in `RenderObject.getDrawParameters()` - with no
+   * per-instance matrix allocated or bound.
+   */
+  private toInstancedGeometry(geometry: THREE.BufferGeometry): THREE.InstancedBufferGeometry {
+    // Always a copy, never the caller's own object. copy() clones the attributes, so
+    // neither dispose() nor setGeometry() can free buffers out from under a geometry
+    // the caller still holds, and writing instanceCount below cannot disturb another
+    // mesh already drawing from the same InstancedBufferGeometry.
+    const instanced = new THREE.InstancedBufferGeometry();
+    instanced.copy(geometry as THREE.InstancedBufferGeometry);
+    instanced.instanceCount = 0; // Updated in update()
+
+    return instanced;
+  }
+
+  /** Instances to draw. Zero draws nothing - three skips the draw call entirely. */
+  private setInstanceCount(count: number): void {
+    (this.mesh.geometry as THREE.InstancedBufferGeometry).instanceCount = count;
+  }
+
+  private createMesh(): THREE.Mesh {
+    const geometry = this.toInstancedGeometry(
+      this.config.particleGeometry || new THREE.PlaneGeometry(1, 1)
+    );
     const material = this.createMaterial();
 
-    const mesh = new THREE.InstancedMesh(
-      geometry,
-      material,
-      this.storageManager.maxParticles
-    );
-
-    mesh.count = 0; // Updated in update()
+    const mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false; // We handle culling ourselves
 
     return mesh;
@@ -401,11 +444,30 @@ export class GPUParticleSystem extends THREE.Group {
     return material;
   }
 
+  /**
+   * Storage index of the particle this shader invocation should read.
+   *
+   * Without sorting, draw instance N renders particle N and this is just
+   * `instanceIndex`. With `sorted: true` the draw order is a permutation: instance N
+   * renders whichever particle the sorter placed in slot N, so *every* read of a
+   * per-particle buffer has to go through the sorted index buffer. Mixing the two -
+   * position via the sorted index but colour via `instanceIndex` - would pair one
+   * particle's position with another's appearance.
+   *
+   * The sorter guarantees slots [0, maxParticles) hold only live storage indices:
+   * padding slots carry a positive sort key and so always land after every live
+   * particle, which are keyed by `-distanceSquared` and therefore <= 0.
+   */
+  private particleIndex(): any {
+    if (!this.sorter) return instanceIndex;
+    return this.sorter.getSortedIndicesStorage().element(instanceIndex);
+  }
+
   private buildParticleOffsetNode(): any {
     const sizeCurve = this.getCurve(this.config.sizeCurve, 'linear');
 
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const pos = this.positionsNode.element(index);
       const spawnTime = this.agesNode.element(index);
       const life = this.lifetimesNode.element(index);
@@ -575,7 +637,7 @@ export class GPUParticleSystem extends THREE.Group {
     const hasColorGradient = !!this.config.colorGradient;
 
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const spawnTime = this.agesNode.element(index);  // Now stores spawn time
       const life = this.lifetimesNode.element(index);
 
@@ -668,7 +730,7 @@ export class GPUParticleSystem extends THREE.Group {
    */
   private buildSpritePositionNode(): any {
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const pos = this.positionsNode.element(index);
       return pos;
     })();
@@ -679,7 +741,7 @@ export class GPUParticleSystem extends THREE.Group {
    */
   private buildScaleNode(): any {
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const spawnTime = this.agesNode.element(index);
       const life = this.lifetimesNode.element(index);
 
@@ -704,7 +766,7 @@ export class GPUParticleSystem extends THREE.Group {
    */
   private buildOpacityNode(): any {
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const spawnTime = this.agesNode.element(index);
       const life = this.lifetimesNode.element(index);
 
@@ -827,9 +889,9 @@ export class GPUParticleSystem extends THREE.Group {
       this.trailRenderer.update(renderer, deltaTime, this.uTime.value);
     }
 
-    // Update mesh count - use full capacity since all particles are managed by GPU
+    // Draw the full capacity, since all particles are managed by the GPU.
     // In a proper implementation, we'd use an indirect draw call with GPU-computed count
-    this.mesh.count = this.config.maxParticles!;
+    this.setInstanceCount(this.config.maxParticles!);
 
     // Update stats (approximate since we can't read GPU count easily)
     const estimatedAlive = Math.min(
@@ -1110,17 +1172,12 @@ export class GPUParticleSystem extends THREE.Group {
 
     // Create new mesh with new geometry
     this.config.particleGeometry = geometry;
-    this.mesh = new THREE.InstancedMesh(
-      geometry,
-      oldMaterial,
-      this.storageManager.maxParticles
-    );
+    this.mesh = new THREE.Mesh(this.toInstancedGeometry(geometry), oldMaterial);
 
     // Restore transform
     this.mesh.position.copy(oldPosition);
     this.mesh.quaternion.copy(oldQuaternion);
     this.mesh.scale.copy(oldScale);
-    this.mesh.count = 0;
     this.mesh.frustumCulled = false;
 
     // Add new mesh to group
