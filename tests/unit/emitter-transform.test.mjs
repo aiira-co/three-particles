@@ -36,10 +36,6 @@ function systemConfig(extra = {}) {
   return {
     maxParticles: 8,
     emissionRate: 0,
-    // Colours are explicit because config defaults do not survive a key that is passed
-    // through as undefined, which is what VFXSystemGroup does with every style field.
-    colorStart: new THREE.Color(1, 1, 1),
-    colorEnd: new THREE.Color(1, 1, 1),
     ...extra,
   };
 }

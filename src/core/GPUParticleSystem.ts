@@ -258,7 +258,7 @@ export class GPUParticleSystem extends THREE.Group {
   }
 
   private applyDefaults(config: GPUParticleSystemConfig): GPUParticleSystemConfig {
-    return {
+    const defaults: GPUParticleSystemConfig = {
       maxParticles: 100000,
       emissionRate: 1000,
       lifetime: 2.0,
@@ -285,8 +285,23 @@ export class GPUParticleSystem extends THREE.Group {
       frustumCulled: false,
       occlusionCulled: false,
       bounciness: 0.5,
-      ...config
     };
+
+    // Merged key by key instead of `{ ...defaults, ...config }`, so a key that is present
+    // but undefined falls back to its default rather than erasing it. Callers produce those
+    // routinely: VFXSystemGroup derives every style config as `style.x ?? base.x`, which is
+    // undefined whenever neither side sets x - and an undefined colorStart then reached
+    // `uColorStart.value.copy()` and threw. null is left alone, it is a real value here
+    // (`sortFrameInterval: null` means auto).
+    const merged: GPUParticleSystemConfig = { ...defaults };
+    for (const key of Object.keys(config) as (keyof GPUParticleSystemConfig)[]) {
+      const value = config[key];
+      if (value !== undefined) {
+        (merged as Record<string, unknown>)[key] = value;
+      }
+    }
+
+    return merged;
   }
 
   private initializeFeatures(): void {
