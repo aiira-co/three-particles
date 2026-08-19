@@ -25,7 +25,8 @@ export interface ParticleSpawnOptions {
   matrix?: THREE.Matrix4;
   /** Transform velocity by matrix orientation (default: true) */
   localSpaceVelocity?: boolean;
-  /** Transform emitter size by matrix scale (default: true) */
+  /** Read the emitter volume in the emitter frame: shape offsets rotated by the matrix
+   * orientation, emitter size scaled by the matrix scale (default: true) */
   localSpaceEmitter?: boolean;
 }
 

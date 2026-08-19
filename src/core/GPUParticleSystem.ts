@@ -772,6 +772,16 @@ export class GPUParticleSystem extends THREE.Group {
     }
 
     const localSpaceEmitter = options.localSpaceEmitter !== false;
+
+    // Shape offsets are built on the emitter axes, so they have to be rotated into world
+    // space before the spawn origin is added. The spawn compute shader gets that for free
+    // out of `emitterMatrix`; the CPU path used to drop it and spawn an axis-aligned volume
+    // from a rotated emitter. Opting out of local emitter space keeps the volume aligned to
+    // the world axes, the same way it keeps the size unscaled.
+    overrides.orientation = localSpaceEmitter
+      ? this._tmpEmitQuaternion.clone()
+      : new THREE.Quaternion();
+
     const baseEmitterSize = options.emitterSize ?? this.config.emitterSize;
     if (baseEmitterSize) {
       this._tmpEmitVelocityVariation.copy(baseEmitterSize);

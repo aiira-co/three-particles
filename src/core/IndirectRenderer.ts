@@ -4,6 +4,8 @@ import type { EmitterShape } from '../types/index.js';
 
 export interface SpawnOverrides {
   position?: THREE.Vector3;
+  /** Emitter orientation, applied to the shape-local offset before `position` is added. */
+  orientation?: THREE.Quaternion;
   velocity?: THREE.Vector3;
   velocityVariation?: THREE.Vector3;
   lifetime?: number;
@@ -19,6 +21,7 @@ interface EmissionCommand {
 
 interface SpawnConfigSnapshot {
   position: THREE.Vector3;
+  orientation: THREE.Quaternion;
   velocity: THREE.Vector3;
   velocityVariation: THREE.Vector3;
   lifetime: number;
@@ -45,6 +48,7 @@ export class IndirectRenderer {
 
   // Spawn configuration
   private spawnPosition = new THREE.Vector3(0, 0, 0);
+  private spawnOrientation = new THREE.Quaternion();
   private spawnVelocity = new THREE.Vector3(0, 1, 0);
   private spawnVelocityVariation = new THREE.Vector3(0.5, 0.5, 0.5);
   private spawnLifetime = 2.0;
@@ -90,6 +94,7 @@ export class IndirectRenderer {
       count: safeCount,
       config: {
         position: (config.position ?? this.spawnPosition).clone(),
+        orientation: (config.orientation ?? this.spawnOrientation).clone(),
         velocity: (config.velocity ?? this.spawnVelocity).clone(),
         velocityVariation: (config.velocityVariation ?? this.spawnVelocityVariation).clone(),
         lifetime: config.lifetime ?? this.spawnLifetime,
@@ -117,6 +122,7 @@ export class IndirectRenderer {
    */
   setSpawnConfig(config: SpawnOverrides): void {
     if (config.position) this.spawnPosition.copy(config.position);
+    if (config.orientation) this.spawnOrientation.copy(config.orientation);
     if (config.velocity) this.spawnVelocity.copy(config.velocity);
     if (config.velocityVariation) this.spawnVelocityVariation.copy(config.velocityVariation);
     if (config.lifetime !== undefined) this.spawnLifetime = config.lifetime;
@@ -128,6 +134,7 @@ export class IndirectRenderer {
   private captureSpawnConfig(): SpawnConfigSnapshot {
     return {
       position: this.spawnPosition.clone(),
+      orientation: this.spawnOrientation.clone(),
       velocity: this.spawnVelocity.clone(),
       velocityVariation: this.spawnVelocityVariation.clone(),
       lifetime: this.spawnLifetime,
@@ -139,6 +146,7 @@ export class IndirectRenderer {
 
   private restoreSpawnConfig(snapshot: SpawnConfigSnapshot): void {
     this.spawnPosition.copy(snapshot.position);
+    this.spawnOrientation.copy(snapshot.orientation);
     this.spawnVelocity.copy(snapshot.velocity);
     this.spawnVelocityVariation.copy(snapshot.velocityVariation);
     this.spawnLifetime = snapshot.lifetime;
@@ -311,6 +319,11 @@ export class IndirectRenderer {
         // Point emitter - no offset
         break;
     }
+
+    // Rotate the shape-local offset into the emitter frame before translating, which is
+    // what `emitterMatrix.mul(vec4(localSpawnPos, 1.0))` does in the spawn compute shader.
+    // Emitter scale is already folded into `size` by the caller, so only rotation is left.
+    pos.applyQuaternion(config?.orientation ?? this.spawnOrientation);
 
     // Add base spawn position
     const basePosition = config?.position ?? this.spawnPosition;
