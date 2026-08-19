@@ -21,7 +21,7 @@ import { GradientCurve } from '../curves/GradientCurve.js';
 import { TrailRenderer } from './TrailRenderer.js';
 
 export class GPUParticleSystem extends THREE.Group {
-  public mesh: THREE.InstancedMesh;
+  public mesh: THREE.Mesh;
   public stats: ParticleStats;
 
   /** Particle data nodes for custom materials.
@@ -315,17 +315,49 @@ export class GPUParticleSystem extends THREE.Group {
     return curve;
   }
 
-  private createMesh(): THREE.InstancedMesh {
-    const geometry = this.config.particleGeometry || new THREE.PlaneGeometry(1, 1);
+  /**
+   * Wraps the particle geometry so the draw call can carry an instance count without
+   * carrying an `instanceMatrix`.
+   *
+   * `THREE.InstancedMesh` allocates one mat4 per instance, and three's node material
+   * binds that whole array as a *uniform* buffer in the vertex stage
+   * (`InstanceNode` -> `buffer( instanceMatrix.array, 'mat4', ... )`). A uniform buffer
+   * binding is capped at 65536 bytes, i.e. 1024 mat4s, so every system with
+   * `maxParticles > 1024` - including the 100000 default of `applyDefaults()` - failed
+   * WebGPU validation and rendered nothing at all.
+   *
+   * The matrix was never read: every particle transform comes from
+   * `material.positionNode` sampling the `positions` storage buffer by `instanceIndex`,
+   * and `NodeMaterial.setupPosition()` overwrites the instanced transform with
+   * `positionNode` regardless. A plain `THREE.Mesh` carrying an
+   * `InstancedBufferGeometry` issues the identical instanced draw - three reads
+   * `geometry.instanceCount` in `RenderObject.getDrawParameters()` - with no
+   * per-instance matrix allocated or bound.
+   */
+  private toInstancedGeometry(geometry: THREE.BufferGeometry): THREE.InstancedBufferGeometry {
+    // Always a copy, never the caller's own object. copy() clones the attributes, so
+    // neither dispose() nor setGeometry() can free buffers out from under a geometry
+    // the caller still holds, and writing instanceCount below cannot disturb another
+    // mesh already drawing from the same InstancedBufferGeometry.
+    const instanced = new THREE.InstancedBufferGeometry();
+    instanced.copy(geometry as THREE.InstancedBufferGeometry);
+    instanced.instanceCount = 0; // Updated in update()
+
+    return instanced;
+  }
+
+  /** Instances to draw. Zero draws nothing - three skips the draw call entirely. */
+  private setInstanceCount(count: number): void {
+    (this.mesh.geometry as THREE.InstancedBufferGeometry).instanceCount = count;
+  }
+
+  private createMesh(): THREE.Mesh {
+    const geometry = this.toInstancedGeometry(
+      this.config.particleGeometry || new THREE.PlaneGeometry(1, 1)
+    );
     const material = this.createMaterial();
 
-    const mesh = new THREE.InstancedMesh(
-      geometry,
-      material,
-      this.storageManager.maxParticles
-    );
-
-    mesh.count = 0; // Updated in update()
+    const mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false; // We handle culling ourselves
 
     return mesh;
@@ -658,9 +690,9 @@ export class GPUParticleSystem extends THREE.Group {
       this.trailRenderer.update(renderer, deltaTime, this.uTime.value);
     }
 
-    // Update mesh count - use full capacity since all particles are managed by GPU
+    // Draw the full capacity, since all particles are managed by the GPU.
     // In a proper implementation, we'd use an indirect draw call with GPU-computed count
-    this.mesh.count = this.config.maxParticles!;
+    this.setInstanceCount(this.config.maxParticles!);
 
     // Update stats (approximate since we can't read GPU count easily)
     const estimatedAlive = Math.min(
@@ -929,17 +961,12 @@ export class GPUParticleSystem extends THREE.Group {
 
     // Create new mesh with new geometry
     this.config.particleGeometry = geometry;
-    this.mesh = new THREE.InstancedMesh(
-      geometry,
-      oldMaterial,
-      this.storageManager.maxParticles
-    );
+    this.mesh = new THREE.Mesh(this.toInstancedGeometry(geometry), oldMaterial);
 
     // Restore transform
     this.mesh.position.copy(oldPosition);
     this.mesh.quaternion.copy(oldQuaternion);
     this.mesh.scale.copy(oldScale);
-    this.mesh.count = 0;
     this.mesh.frustumCulled = false;
 
     // Add new mesh to group
