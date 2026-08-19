@@ -150,6 +150,25 @@ vfxStore.play("explosion");
 
 You can also use the `.emit()` method directly on the `GPUParticleSystem` instance if you prefer not to use the store.
 
+### Simulation Space
+
+Particles simulate in **world space**. The emitter transform is baked in once, when a particle spawns: `emit()` resolves the system world matrix on the CPU, and continuously emitted particles receive it inside the spawn compute shader. Everything after that - gravity, providers, depth collisions, depth sorting - operates on those world-space positions.
+
+```typescript
+system.position.set(5, 0, 0);
+system.burst(1); // spawns at world (5, 0, 0) and renders at world (5, 0, 0)
+
+system.position.set(0, 8, 0); // later bursts spawn at (0, 8, 0);
+                              // particles already alive stay where they are
+```
+
+Two consequences worth knowing:
+
+- Moving the system moves the *emitter*, not the particles already in flight. Move it every frame and you get a trail left through the world, not a cloud dragged along with it.
+- The render meshes are pinned to an identity world matrix, so a transform set directly on `system.mesh` is ignored. Transform the system instead, or pass a per-burst matrix: `system.emit({ count: 20, matrix: someObject.matrixWorld })`.
+
+`localSpaceVelocity` and `localSpaceEmitter` on `emit()` control that same bake step - whether spawn velocity and emitter size are read in the emitter frame - not whether the simulation itself is local.
+
 ## Advanced Features
 
 ### Ribbon Trails

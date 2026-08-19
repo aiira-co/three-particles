@@ -20,6 +20,29 @@ import { LifetimeCurve, CurvePreset } from '../curves/LifetimeCurve.js';
 import { GradientCurve } from '../curves/GradientCurve.js';
 import { TrailRenderer } from './TrailRenderer.js';
 
+/**
+ * GPU-driven particle system.
+ *
+ * SIMULATION SPACE: particle positions are stored in WORLD space.
+ *
+ * The emitter transform (this Group's `matrixWorld`) is baked in once, at spawn time:
+ * `emit()` resolves it on the CPU, and the compute pipeline applies it to GPU-spawned
+ * particles through `setEmitterMatrix()`. Everything downstream reads and writes those
+ * same world-space positions - gravity, providers, depth collisions and the depth sorter
+ * all assume world space - and the render shaders hand them straight to the clip-space
+ * transform.
+ *
+ * So the draw must NOT apply the emitter transform a second time. Every mesh this Group
+ * renders is therefore pinned to an identity world matrix by `attachRenderMesh()`;
+ * without that the emitter offset lands twice and particles render at double their
+ * distance from the origin.
+ *
+ * Move the system (or pass `emit({ matrix })`) to move where particles are born.
+ * Particles already alive keep their world position, which is what a world-space
+ * simulation should do. `localSpaceVelocity` / `localSpaceEmitter` on `emit()` describe
+ * that same bake step - whether spawn velocity and emitter size are read in the emitter
+ * frame - not local-space simulation.
+ */
 export class GPUParticleSystem extends THREE.Group {
   public mesh: THREE.InstancedMesh;
   public stats: ParticleStats;
@@ -217,9 +240,10 @@ export class GPUParticleSystem extends THREE.Group {
     // Initialize optional features
     this.initializeFeatures();
 
-    // Create mesh
+    // Create mesh. Pinned to an identity world matrix - particle positions are already
+    // world space, see the class comment.
     this.mesh = this.createMesh();
-    this.add(this.mesh);
+    this.attachRenderMesh(this.mesh);
 
     // Initialize stats
     this.stats = {
@@ -298,7 +322,7 @@ export class GPUParticleSystem extends THREE.Group {
         fadeAlpha
       );
       this.trailRenderer.setParticleStorage(this.positionsNode, this.agesNode);
-      this.add(this.trailRenderer.getMesh());
+      this.attachRenderMesh(this.trailRenderer.getMesh());
     }
   }
 
@@ -313,6 +337,26 @@ export class GPUParticleSystem extends THREE.Group {
       return new LifetimeCurve(curve);
     }
     return curve;
+  }
+
+  /**
+   * Parent a mesh that draws world-space particle positions.
+   *
+   * Particle positions are already world space (see the class comment), so the mesh has to
+   * render with an identity model matrix. Pinning `matrixWorld` here, instead of
+   * reparenting the mesh out of this Group, keeps the rest of the scene graph behaving as
+   * callers expect: `visible`, `layers`, `renderOrder`, removal and disposal still travel
+   * from the system down to its meshes.
+   *
+   * A transform set on the mesh itself is deliberately ignored - transform the system.
+   */
+  private attachRenderMesh(mesh: THREE.Object3D): void {
+    mesh.matrixAutoUpdate = false;
+    mesh.matrixWorldAutoUpdate = false;
+    mesh.matrix.identity();
+    mesh.matrixWorld.identity();
+
+    this.add(mesh);
   }
 
   private createMesh(): THREE.InstancedMesh {
@@ -913,10 +957,6 @@ export class GPUParticleSystem extends THREE.Group {
   setGeometry(geometry: THREE.BufferGeometry): void {
     if (!geometry) return;
 
-    // Store old mesh transform
-    const oldPosition = this.mesh.position.clone();
-    const oldQuaternion = this.mesh.quaternion.clone();
-    const oldScale = this.mesh.scale.clone();
     const oldMaterial = this.mesh.material;
 
     // Dispose old geometry
@@ -935,15 +975,12 @@ export class GPUParticleSystem extends THREE.Group {
       this.storageManager.maxParticles
     );
 
-    // Restore transform
-    this.mesh.position.copy(oldPosition);
-    this.mesh.quaternion.copy(oldQuaternion);
-    this.mesh.scale.copy(oldScale);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
 
-    // Add new mesh to group
-    this.add(this.mesh);
+    // The old mesh transform is not carried over: particle positions are world space, so
+    // a transform on the mesh is ignored either way.
+    this.attachRenderMesh(this.mesh);
   }
 
   /**

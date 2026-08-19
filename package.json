@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "tsc && node --test \"tests/**/*.test.mjs\"",
     "clean": "rimraf dist",
     "prepublishOnly": "yarn clean && yarn build"
   },

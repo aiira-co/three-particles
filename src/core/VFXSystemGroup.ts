@@ -90,10 +90,13 @@ export class VFXSystemGroup {
         delete (styleConfig as any).styles;
 
         const system = new GPUParticleSystem(styleConfig);
+        system.name = name;
         system.mesh.name = name;
 
         this._systems.set(name, system);
-        this._group.add(system.mesh);
+        // Add the system, not just its mesh: the emitter transform is what has to pick up
+        // this group transform, because spawn positions are resolved in world space.
+        this._group.add(system);
 
         console.log(`[VFXSystemGroup] Created system: ${name}`);
     }

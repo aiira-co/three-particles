@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { texture, uniform, Fn, vec2, float } from 'three/tsl';
-import type { TextureSheetConfig } from '../types';
+import type { TextureSheetConfig } from '../types/index.js';
 
 export class TextureAtlas {
   private texture: THREE.Texture;
