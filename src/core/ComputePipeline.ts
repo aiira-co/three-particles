@@ -205,7 +205,9 @@ export class ComputePipeline {
         const randVelY = hash(seed.add(4)).mul(2.0).sub(1.0);
         const randVelZ = hash(seed.add(5)).mul(2.0).sub(1.0);
 
-        // Spawn position in local emitter space based on emitter shape.
+        // Spawn position in local emitter space based on emitter shape. emitterSize is a
+        // half extent per axis for every shape - see ParticleSpawnOptions.emitterSize and
+        // IndirectRenderer.getSpawnPositionForShape(), which has to match this.
         const localSpawnPos = vec3(0, 0, 0).toVar();
 
         // BOX

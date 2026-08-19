@@ -19,7 +19,7 @@ export interface ParticleSpawnOptions {
   lifetimeVariation?: number;
   /** Emitter shape override */
   emitterShape?: EmitterShape;
-  /** Emitter size override */
+  /** Emitter size override, a half extent per axis (see GPUParticleSystemConfig.emitterSize) */
   emitterSize?: THREE.Vector3;
   /** Optional emitter transform matrix (world) */
   matrix?: THREE.Matrix4;
@@ -44,6 +44,7 @@ export interface GPUParticleSystemConfig {
 
   // Emitter
   emitterShape?: EmitterShape;
+  /** Half extent per axis: sphere radius, box spanning 2x this, line 2 * y long (default: (1,1,1)) */
   emitterSize?: THREE.Vector3;
   emitterMesh?: THREE.Mesh;
 

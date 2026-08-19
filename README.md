@@ -140,7 +140,7 @@ vfxStore.emit("explosion", {
   position: new THREE.Vector3(5, 0, 5), // Override spawn position
   velocity: new THREE.Vector3(0, 10, 0),
   emitterShape: "sphere",
-  emitterSize: new THREE.Vector3(2, 2, 2),
+  emitterSize: new THREE.Vector3(2, 2, 2), // radius per axis, see Emitter Size
 });
 
 // 4. Control playback
@@ -168,6 +168,33 @@ Two consequences worth knowing:
 - The render meshes are pinned to an identity world matrix, so a transform set directly on `system.mesh` is ignored. Transform the system instead, or pass a per-burst matrix: `system.emit({ count: 20, matrix: someObject.matrixWorld })`.
 
 `localSpaceVelocity` and `localSpaceEmitter` on `emit()` control that same bake step - whether spawn velocity and emitter size are read in the emitter frame - not whether the simulation itself is local.
+
+### Emitter Size
+
+`emitterSize` is a **half extent per axis**, for every shape:
+
+| Shape | `emitterSize` means | Spawn volume |
+| --- | --- | --- |
+| `point` | unused | the emitter origin |
+| `box` | half extent per axis | `2x` size on each axis, centred on the emitter |
+| `sphere` | radius per axis (an ellipsoid when they differ) | inside that radius |
+| `line` | half length in `y` | `2 * size.y` along the emitter Y axis |
+
+```typescript
+const system = new GPUParticleSystem({
+  emitterShape: "box",
+  emitterSize: new THREE.Vector3(3, 0.05, 0.05), // a 6 x 0.1 x 0.1 slab
+});
+```
+
+The volume is read in the emitter frame, so it rotates and scales with the system - see
+`localSpaceEmitter` under [Spawning](#spawning--vfxstore-v180) to opt out.
+
+> **Behaviour change.** `box` and `line` bursts used to read `emitterSize` as a full width,
+> so `burst()`/`emit()` filled half the volume that the same config filled through
+> `emissionRate`. Both paths are on the half extent now, which means existing `box` and
+> `line` sizes spawn twice as wide from a burst as they did before - halve them to keep the
+> old look. `point` and `sphere` are unaffected.
 
 ## Advanced Features
 
@@ -685,7 +712,7 @@ interface GPUParticleSystemConfig {
 
   // Emitter Shape
   emitterShape?: "point" | "box" | "sphere" | "mesh" | "line";
-  emitterSize?: THREE.Vector3;
+  emitterSize?: THREE.Vector3; // Half extent per axis, see Emitter Size
   emitterMesh?: THREE.Mesh; // Emit from surface of mesh
 
   // Visual

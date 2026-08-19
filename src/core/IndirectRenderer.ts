@@ -268,7 +268,13 @@ export class IndirectRenderer {
   }
 
   /**
-   * Calculate spawn position based on emitter shape
+   * Calculate spawn position based on emitter shape.
+   *
+   * `emitterSize` is a HALF EXTENT per axis for every shape: a sphere of radius size, a box
+   * spanning 2 * size, a line 2 * size.y long. That is the convention the spawn compute
+   * shader uses, so a burst and continuous emission fill the same volume. Box and line used
+   * to read size as a full width here, which made them half the size of their GPU
+   * counterparts.
    */
   private getSpawnPositionForShape(config?: SpawnOverrides, out?: THREE.Vector3): THREE.Vector3 {
     const pos = out ?? new THREE.Vector3();
@@ -279,7 +285,7 @@ export class IndirectRenderer {
 
     switch (shape) {
       case 'sphere': {
-        // Random point within sphere
+        // Random point within the sphere of radius `size` (per axis, so an ellipsoid)
         const u = Math.random();
         const v = Math.random();
         const theta = 2 * Math.PI * u;
@@ -295,20 +301,20 @@ export class IndirectRenderer {
       }
 
       case 'box': {
-        // Random point within box
+        // Random point within the box, `size` either side of the origin on each axis
         pos.set(
-          (Math.random() - 0.5) * size.x,
-          (Math.random() - 0.5) * size.y,
-          (Math.random() - 0.5) * size.z
+          (Math.random() * 2 - 1) * size.x,
+          (Math.random() * 2 - 1) * size.y,
+          (Math.random() * 2 - 1) * size.z
         );
         break;
       }
 
       case 'line': {
-        // Random point along Y-axis line
+        // Random point on the local Y line, `size.y` either side of the origin
         pos.set(
           0,
-          (Math.random() - 0.5) * size.y,
+          (Math.random() * 2 - 1) * size.y,
           0
         );
         break;
