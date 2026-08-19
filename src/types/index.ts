@@ -30,16 +30,58 @@ export interface ParticleSpawnOptions {
 }
 
 
+/**
+ * Procedural silhouette evaluated per fragment, so a particle can read as an
+ * ember, a puff of smoke or a spark without a sprite texture, an atlas or the
+ * texture fetch any of those cost.
+ *
+ * - `square`  the raw quad (or `particleGeometry`) with no mask. Historical
+ *              default: an untextured particle is a hard-edged square, so this
+ *              is only the right choice when a `texture` supplies the shape.
+ * - `soft`    round and feathered — embers, droplets, dust, glows
+ * - `smoke`   round but noise-eroded, animated — puffs, billows, steam
+ * - `streak`  a thin tapered line — sparks, tracers, rain
+ * - `leaf`    a pointed leaf silhouette with a centre vein — foliage, petals
+ * - `chip`    an angular fragment, randomised per particle — rubble, shards
+ * - `ring`    a thin hollow ring — shockwaves, impact rings
+ *
+ * A shape compiles into the material, so it is fixed for the lifetime of the
+ * system; changing it requires rebuilding the material.
+ */
+export type ParticleShapeMask =
+  | 'square'
+  | 'soft'
+  | 'smoke'
+  | 'streak'
+  | 'leaf'
+  | 'chip'
+  | 'ring';
+
 export interface GPUParticleSystemConfig {
   // Core
   maxParticles?: number;
   emissionRate?: number;
   lifetime?: number;
   loop?: boolean;
+  /**
+   * Hard ceiling on continuous-emission spawns in a single frame.
+   *
+   * Emission already clamps the step it integrates, so this is only needed to
+   * pin a system below its nominal rate on slow frames. When the cap bites, the
+   * outstanding fractional debt is dropped rather than carried, so a recovered
+   * hitch resumes the nominal rate instead of emitting at the cap for the next
+   * several frames. Bursts are not affected.
+   */
+  maxSpawnPerFrame?: number;
 
   // Geometry
   particleGeometry?: THREE.BufferGeometry;
   billboard?: boolean;
+  /**
+   * Procedural fragment silhouette. Defaults to `'square'` (no mask), which
+   * preserves the pre-existing look of every system that does not opt in.
+   */
+  shape?: ParticleShapeMask;
 
   // Emitter
   emitterShape?: EmitterShape;
@@ -212,6 +254,15 @@ export interface StyleConfig {
 
   /** Billboard mode for this style (default: inherit from system) */
   billboard?: boolean;
+
+  /**
+   * Procedural silhouette for this style (default: inherit from system).
+   *
+   * This is what makes a single effect read as several materials at once: the
+   * canonical fire/smoke/sparks group wants `'soft'`, `'smoke'` and
+   * `'streak'` respectively, and each style compiles its own program.
+   */
+  shape?: ParticleShapeMask;
 
   // ==================== Visual Properties ====================
 

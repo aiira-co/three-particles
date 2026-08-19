@@ -4,7 +4,7 @@ import { AttractorProvider } from '../providers/AttractorProvider.js';
 import { TurbulenceProvider } from '../providers/TurbulenceProvider.js';
 import { VortexProvider } from '../providers/VortexProvider.js';
 import { WindProvider } from '../providers/WindProvider.js';
-import type { EmitterShape, GPUParticleSystemConfig } from '../types/index.js';
+import type { EmitterShape, GPUParticleSystemConfig, ParticleShapeMask } from '../types/index.js';
 
 export type Vector3Like = THREE.Vector3 | [number, number, number] | { x: number; y: number; z: number };
 export type ColorLike = THREE.Color | string | [number, number, number] | { r: number; g: number; b: number };
@@ -96,7 +96,26 @@ export interface VFXNodeSystemConfig {
   sorted?: boolean;
   sortFrameInterval?: number | null;
   softParticles?: boolean;
+  /** Depth-fade distance in world units. Only meaningful with `softParticles`. */
+  softness?: number;
+  /**
+   * Procedural particle silhouette — 'soft', 'smoke', 'streak', 'leaf', 'chip'
+   * or 'ring'. Not to be confused with `emitter.shape`, which is the emission
+   * volume. Omitted or 'square' leaves the quad unmasked.
+   */
+  shape?: ParticleShapeMask;
+  maxSpawnPerFrame?: number;
   trail?: GPUParticleSystemConfig['trail'];
+}
+
+const PARTICLE_SHAPES: readonly ParticleShapeMask[] = [
+  'square', 'soft', 'smoke', 'streak', 'leaf', 'chip', 'ring'
+];
+
+function toParticleShape(value: unknown): ParticleShapeMask | undefined {
+  return PARTICLE_SHAPES.includes(value as ParticleShapeMask)
+    ? (value as ParticleShapeMask)
+    : undefined;
 }
 
 export interface VFXNodeBuildResult {
@@ -283,6 +302,19 @@ export function buildVFXFromNodeConfig(
 
   if (typeof nodeConfig.softParticles === 'boolean') {
     config.softParticles = nodeConfig.softParticles;
+  }
+
+  if (isFiniteNumber(nodeConfig.softness)) {
+    config.softness = nodeConfig.softness;
+  }
+
+  const particleShape = toParticleShape(nodeConfig.shape);
+  if (particleShape) {
+    config.shape = particleShape;
+  }
+
+  if (isFiniteNumber(nodeConfig.maxSpawnPerFrame)) {
+    config.maxSpawnPerFrame = nodeConfig.maxSpawnPerFrame;
   }
 
   if (nodeConfig.trail) {

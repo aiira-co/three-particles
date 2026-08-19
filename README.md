@@ -152,6 +152,68 @@ You can also use the `.emit()` method directly on the `GPUParticleSystem` instan
 
 ## Advanced Features
 
+### Particle Shapes
+
+`shape` cuts a procedural silhouette out of each particle in the fragment
+shader. No sprite, no atlas, no texture fetch — and nothing to author or ship.
+
+| `shape` | Reads as |
+| --- | --- |
+| `"square"` | the raw quad, unmasked (**default**) |
+| `"soft"` | round and feathered — embers, droplets, dust, glows |
+| `"smoke"` | noise-eroded and animated — puffs, billows, steam |
+| `"streak"` | thin and tapered — sparks, tracers, rain |
+| `"leaf"` | pointed silhouette with a centre vein — foliage, petals |
+| `"chip"` | angular fragment, randomised per particle — rubble, shards |
+| `"ring"` | thin hollow ring — shockwaves, impact rings |
+
+`"square"` is the default for backwards compatibility, but note what it means:
+an **untextured** particle is a hard-edged square. If you are not supplying a
+`texture`, you almost certainly want `"soft"`.
+
+```js
+const embers = new GPUParticleSystem({ shape: 'soft', blending: THREE.AdditiveBlending });
+```
+
+The shape is compiled into the material, so each one becomes its own program
+rather than a per-fragment branch — and changing it requires rebuilding the
+material rather than setting a uniform.
+
+Styles can each carry their own shape, which is what lets one effect read as
+several materials at once:
+
+```js
+new VFXSystemGroup({
+  styles: [
+    { name: 'fire',   shape: 'soft',   weight: 3 },
+    { name: 'smoke',  shape: 'smoke',  weight: 2 },
+    { name: 'sparks', shape: 'streak', weight: 1 },
+  ],
+});
+```
+
+### Soft Particles
+
+`softParticles: true` fades a particle out where its quad slices into opaque
+geometry, instead of showing a hard intersection seam — smoke meeting the floor,
+steam against a wall.
+
+```js
+const smoke = new GPUParticleSystem({ shape: 'smoke', softParticles: true, softness: 1.5 });
+smoke.setSoftness(0.75); // live — a uniform, so no material rebuild
+```
+
+`softness` is a distance in **world units**, not a 0..1 factor: at
+`softness: 1.5` a particle is fully transparent where it touches geometry and
+fully opaque 1.5 units in front of it. It is independent of the camera's
+near/far, so it does not need re-tuning when those change.
+
+There is nothing to set up. The fade samples the framebuffer's own depth from
+inside the fragment shader via `viewportDepthTexture`, which copies once per
+render call (not per draw) into a texture shared by every system that opts in —
+so no prepass, no render layer, and no depth texture to pass around. The
+deprecated `SoftParticles` class plays no part in it.
+
 ### Ribbon Trails
 
 Create smooth, flowing trails behind particles using GPU position history.
@@ -218,6 +280,12 @@ particles.setDepthTexture(depthTexture);
 ### Custom Materials
 
 Inject your own TSL-based material for full shader control. Two approaches available:
+
+> **Note:** a custom `material` or `materialFactory` replaces the built-in
+> fragment shader, so `shape`, `softParticles` and the built-in dead-fragment
+> discard do **not** apply — reproduce whichever of those you need in your own
+> `colorNode`. The particle transform (`positionNode`), including the
+> zero-size collapse of dead particles, is still injected for you.
 
 #### Option A: Material Injection
 
@@ -659,10 +727,12 @@ interface GPUParticleSystemConfig {
   emissionRate?: number; // Particles per second
   lifetime?: number; // Particle lifetime in seconds
   loop?: boolean; // Continuous emission
+  maxSpawnPerFrame?: number; // Optional hard cap on continuous spawns per frame
 
   // Geometry
   particleGeometry?: THREE.BufferGeometry; // Custom geometry
   billboard?: boolean; // Face camera (default: true)
+  shape?: ParticleShapeMask; // Procedural silhouette (default: "square")
 
   // Emitter Shape
   emitterShape?: "point" | "box" | "sphere" | "mesh" | "line";
@@ -703,7 +773,7 @@ interface GPUParticleSystemConfig {
   // Quality
   sorted?: boolean; // Back-to-front sorting
   softParticles?: boolean; // Depth-aware fading
-  softness?: number; // Soft edge distance
+  softness?: number; // Fade distance in WORLD UNITS (not 0..1)
   frustumCulled?: boolean; // GPU frustum culling
 
   // LOD

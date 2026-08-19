@@ -57,6 +57,7 @@ export class VFXSystemGroup {
             // Override with style-specific values
             particleGeometry: style.geometry ?? this._baseConfig.particleGeometry,
             billboard: style.billboard ?? this._baseConfig.billboard,
+            shape: style.shape ?? this._baseConfig.shape,
             colorStart: style.colorStart ?? this._baseConfig.colorStart,
             colorEnd: style.colorEnd ?? this._baseConfig.colorEnd,
             sizeStart: style.sizeStart ?? this._baseConfig.sizeStart,

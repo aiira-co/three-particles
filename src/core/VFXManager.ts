@@ -58,7 +58,6 @@ export class VFXManager {
   private systems: Map<string, GPUParticleSystem> = new Map();
   private renderer: WebGPURenderer;
   private camera: THREE.Camera;
-  private depthTexture: THREE.DepthTexture | null = null;
   private scene: THREE.Scene;
 
   // Post-processing
@@ -90,8 +89,10 @@ export class VFXManager {
     this.renderer = renderer;
     this.camera = camera;
 
-    // Create shared depth texture for soft particles
-    this.createDepthTexture();
+    // Soft particles need nothing set up here. The fade samples the
+    // framebuffer's own depth from inside the particle fragment shader, so
+    // there is no shared depth texture to allocate, fill or hand around — just
+    // set `softParticles: true` on a system's config.
 
     // Setup post-processing if enabled
     if (config?.postProcessing) {
@@ -102,11 +103,6 @@ export class VFXManager {
     if (config?.depthCollision?.enabled) {
       this.setupDepthCollision(config.depthCollision);
     }
-  }
-
-  private createDepthTexture(): void {
-    const size = this.renderer.getSize(new THREE.Vector2());
-    this.depthTexture = new THREE.DepthTexture(size.width, size.height);
   }
 
   /**
@@ -176,11 +172,6 @@ export class VFXManager {
     }
 
     const system = new GPUParticleSystem(config);
-
-    // Set shared depth texture for soft particles
-    if (this.depthTexture && config.softParticles) {
-      system.setDepthTexture(this.depthTexture);
-    }
 
     // Add depth collision provider if enabled
     if (this.depthCollisionEnabled && this.depthCollisionProvider) {
@@ -318,10 +309,6 @@ export class VFXManager {
       system.dispose();
     });
     this.systems.clear();
-
-    if (this.depthTexture) {
-      this.depthTexture.dispose();
-    }
 
     if (this.depthCollisionProvider) {
       this.depthCollisionProvider.dispose();

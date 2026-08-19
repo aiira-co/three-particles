@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { StorageManager } from './StorageManager';
+import { StorageManager } from './StorageManager.js';
 import type { EmitterShape } from '../types/index.js';
 
 export interface SpawnOverrides {
