@@ -124,6 +124,14 @@ export class GPUParticleSystem extends THREE.Group {
     this.storageManager = new StorageManager(maxParticles);
     this.indirectRenderer = new IndirectRenderer(this.storageManager);
 
+    // Created here rather than in initializeFeatures() because every shader node
+    // built below has to index particle data through the sorted index buffer, and
+    // the material graph is built before initializeFeatures() would have run.
+    // initializeFeatures() still wires it into the compute pipeline.
+    if (this.config.sorted) {
+      this.sorter = new GPUSorter(maxParticles);
+    }
+
     // Create TSL storage nodes wrapping StorageManager buffers
     // This enables both CPU writes (for bursts) and GPU compute access (for physics)
     // Using storage() instead of instancedArray() is the standard Three.js pattern
@@ -142,6 +150,9 @@ export class GPUParticleSystem extends THREE.Group {
     const lifetimesNode = this.lifetimesNode;
     const timeUniform = this.uTime;
     const styleCount = this.config.styles?.length ?? 1;
+    // Resolved lazily: with sorting enabled this reads the sorted index buffer, and
+    // custom materials must use the same index the built-in shaders do.
+    const particleIndex = () => this.particleIndex();
 
     this.particleNodes = {
       positions: posNode,
@@ -153,25 +164,26 @@ export class GPUParticleSystem extends THREE.Group {
       styles: stylesNode,
       time: timeUniform,
       delta: this.uDelta,
-      index: instanceIndex,
+      get index() { return particleIndex(); },
 
       // Helper functions that return computed TSL nodes
       progress: () => {
-        const age = timeUniform.sub(agesNode.element(instanceIndex));
-        const lifetime = lifetimesNode.element(instanceIndex);
+        const index = particleIndex();
+        const age = timeUniform.sub(agesNode.element(index));
+        const lifetime = lifetimesNode.element(index);
         return age.div(lifetime).clamp(0, 1);
       },
       speed: () => {
-        return tslLength(velNode.element(instanceIndex));
+        return tslLength(velNode.element(particleIndex()));
       },
       direction: () => {
-        return tslNormalize(velNode.element(instanceIndex));
+        return tslNormalize(velNode.element(particleIndex()));
       },
       styleIndex: () => {
-        return stylesNode.element(instanceIndex);
+        return stylesNode.element(particleIndex());
       },
       isStyle: (idx: number) => {
-        return stylesNode.element(instanceIndex).equal(float(idx));
+        return stylesNode.element(particleIndex()).equal(float(idx));
       },
       styleCount
     };
@@ -266,9 +278,8 @@ export class GPUParticleSystem extends THREE.Group {
   }
 
   private initializeFeatures(): void {
-    // Sorting
-    if (this.config.sorted) {
-      this.sorter = new GPUSorter(this.storageManager.maxParticles);
+    // Sorting - the sorter itself is constructed in the constructor, see there.
+    if (this.sorter) {
       this.computePipeline.addSorter(this.sorter);
       this.computePipeline.setSortFrameInterval(this.config.sortFrameInterval);
     }
@@ -412,11 +423,30 @@ export class GPUParticleSystem extends THREE.Group {
     return material;
   }
 
+  /**
+   * Storage index of the particle this shader invocation should read.
+   *
+   * Without sorting, draw instance N renders particle N and this is just
+   * `instanceIndex`. With `sorted: true` the draw order is a permutation: instance N
+   * renders whichever particle the sorter placed in slot N, so *every* read of a
+   * per-particle buffer has to go through the sorted index buffer. Mixing the two -
+   * position via the sorted index but colour via `instanceIndex` - would pair one
+   * particle's position with another's appearance.
+   *
+   * The sorter guarantees slots [0, maxParticles) hold only live storage indices:
+   * padding slots carry a positive sort key and so always land after every live
+   * particle, which are keyed by `-distanceSquared` and therefore <= 0.
+   */
+  private particleIndex(): any {
+    if (!this.sorter) return instanceIndex;
+    return this.sorter.getSortedIndicesStorage().element(instanceIndex);
+  }
+
   private buildParticleOffsetNode(): any {
     const sizeCurve = this.getCurve(this.config.sizeCurve, 'linear');
 
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const pos = this.positionsNode.element(index);
       const spawnTime = this.agesNode.element(index);
       const life = this.lifetimesNode.element(index);
@@ -464,7 +494,7 @@ export class GPUParticleSystem extends THREE.Group {
     const hasColorGradient = !!this.config.colorGradient;
 
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const spawnTime = this.agesNode.element(index);  // Now stores spawn time
       const life = this.lifetimesNode.element(index);
 
@@ -541,7 +571,7 @@ export class GPUParticleSystem extends THREE.Group {
    */
   private buildSpritePositionNode(): any {
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const pos = this.positionsNode.element(index);
       return pos;
     })();
@@ -552,7 +582,7 @@ export class GPUParticleSystem extends THREE.Group {
    */
   private buildScaleNode(): any {
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const spawnTime = this.agesNode.element(index);
       const life = this.lifetimesNode.element(index);
 
@@ -577,7 +607,7 @@ export class GPUParticleSystem extends THREE.Group {
    */
   private buildOpacityNode(): any {
     return Fn(() => {
-      const index = instanceIndex;
+      const index = this.particleIndex();
       const spawnTime = this.agesNode.element(index);
       const life = this.lifetimesNode.element(index);
 
