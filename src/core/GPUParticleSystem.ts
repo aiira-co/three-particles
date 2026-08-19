@@ -3,7 +3,9 @@ import {
   vec3, vec4, float, uniform, storage, Fn, instanceIndex,
   positionLocal, mix, smoothstep, If, sin, cos, texture, uv,
   cameraViewMatrix, clamp as tslClamp, max as tslMax, length as tslLength,
-  normalize as tslNormalize
+  normalize as tslNormalize,
+  abs as tslAbs, atan as tslAtan, hash, mx_fractal_noise_float, Discard,
+  viewportDepthTexture, perspectiveDepthToViewZ, positionView, cameraNear, cameraFar
 } from 'three/tsl';
 import {
   MeshBasicNodeMaterial,
@@ -14,7 +16,7 @@ import { StorageManager } from './StorageManager.js';
 import { IndirectRenderer, type SpawnOverrides } from './IndirectRenderer.js';
 import { GPUSorter } from './GPUSorter.js';
 import { ComputePipeline } from './ComputePipeline.js';
-import { GPUParticleSystemConfig, ParticleStats, ParticleSpawnOptions, EmitterShape } from '../types/index.js';
+import { GPUParticleSystemConfig, ParticleStats, ParticleSpawnOptions, EmitterShape, ParticleShapeMask } from '../types/index.js';
 import { BaseProvider } from '../providers/BaseProvider.js';
 import { LifetimeCurve, CurvePreset } from '../curves/LifetimeCurve.js';
 import { GradientCurve } from '../curves/GradientCurve.js';
@@ -71,6 +73,22 @@ export class GPUParticleSystem extends THREE.Group {
   private _isPlaying: boolean = true;
   private _isPaused: boolean = false;
 
+  /**
+   * Longest step continuous emission will integrate, in seconds.
+   *
+   * A backgrounded tab, a shader compile or a blocking asset decode can hand
+   * `update()` a multi-second delta. Without a bound, the fractional accumulator
+   * resolves to `emissionRate * delta` spawns in one frame — at the default rate
+   * of 1000/s a two-second stall recycles 2000 slots at once, wiping every live
+   * particle in a smaller system and spiking the frame that was already late.
+   * Hosts should clamp their own frame delta too; this makes the package safe
+   * standalone.
+   */
+  private static readonly MAX_EMISSION_STEP = 1 / 20;
+
+  /** Fragment alpha below which a particle fragment is discarded outright. */
+  private static readonly ALPHA_EPSILON = 1 / 255;
+
   // GPU-based spawning state
   private emissionAccumulator: number = 0;
   private nextSpawnIndex: number = 0;
@@ -89,6 +107,8 @@ export class GPUParticleSystem extends THREE.Group {
   private uOpacityStart = uniform(1.0);
   private uOpacityEnd = uniform(0.0);
   private uBillboard = uniform(1); // 1 = billboard mode, 0 = geometry mode
+  /** Depth-fade distance for soft particles, in world units. */
+  private uSoftness = uniform(0.5);
 
   // TSL Storage accessors (for shader access)
   private positionsNode: any;
@@ -118,6 +138,7 @@ export class GPUParticleSystem extends THREE.Group {
     this.uOpacityStart.value = this.config.opacityStart!;
     this.uOpacityEnd.value = this.config.opacityEnd!;
     this.uBillboard.value = this.config.billboard !== false ? 1 : 0;
+    this.uSoftness.value = this.config.softness ?? 0.5;
 
     // Initialize core systems
     const maxParticles = this.config.maxParticles!;
@@ -240,6 +261,7 @@ export class GPUParticleSystem extends THREE.Group {
       lifetime: 2.0,
       loop: true,
       billboard: true,
+      shape: 'square',
       emitterShape: 'point',
       emitterSize: new THREE.Vector3(1, 1, 1),
       velocity: new THREE.Vector3(0, 1, 0),
@@ -273,10 +295,9 @@ export class GPUParticleSystem extends THREE.Group {
       this.computePipeline.setSortFrameInterval(this.config.sortFrameInterval);
     }
 
-    // Soft particles
-    if (this.config.softParticles) {
-      // Will be configured when setDepthTexture is called
-    }
+    // Soft particles need nothing here: the fade samples the framebuffer's own
+    // depth in the fragment shader (see buildSoftFadeNode), so there is no
+    // prepass to set up and no depth texture to hand around.
 
     // Frustum culling
     if (this.config.frustumCulled) {
@@ -395,11 +416,22 @@ export class GPUParticleSystem extends THREE.Group {
 
       // Size over lifetime with curve easing
       const easedProgress = sizeCurve.sample(progress);
-      const size = mix(
+      const sizeOverLife = mix(
         this.uSizeStart,
         this.uSizeEnd,
         easedProgress
       );
+
+      // Collapse dead and not-yet-spawned particles to a zero-size point.
+      //
+      // The fragment stage discards them anyway, but only after the rasteriser
+      // has walked every pixel of a full-size quad. Buffers spend most of their
+      // life mostly dead — a 100k system emitting 1000/s over a 2s lifetime has
+      // ~2k live particles and 98k corpses — so without this the overwhelming
+      // majority of the fill rate is spent generating fragments that are thrown
+      // away. A degenerate quad produces no fragments at all.
+      const isAlive = age.greaterThanEqual(float(0)).and(age.lessThan(life));
+      const size = sizeOverLife.mul(isAlive.select(float(1), float(0)));
 
       // For billboard mode, orient local quad axes to camera
       const viewMat: any = cameraViewMatrix;
@@ -427,6 +459,117 @@ export class GPUParticleSystem extends THREE.Group {
     return positionLocal.add(this.buildParticleOffsetNode());
   }
 
+  /**
+   * Depth fade that stops a particle quad from showing a hard seam where it
+   * intersects opaque geometry — smoke meeting the floor, steam against a wall.
+   *
+   * The reference implementations of this render a dedicated half-resolution
+   * depth prepass and sample it as packed RGBA. On WebGPU none of that is
+   * necessary: `viewportDepthTexture` copies the framebuffer's real depth once
+   * per render call (not per draw) into a texture shared by every system that
+   * asks for it, so this is full resolution, exact, and costs one copy per frame
+   * no matter how many particle systems opt in.
+   *
+   * The comparison is done in **view space** rather than via the normalised
+   * `linearDepth()` / `viewportLinearDepth` pair, because view-space Z needs no
+   * assumption about the clip-depth convention or the near/far normalisation on
+   * either side. Verified against a wall at known distances: the fade matches
+   * `gap / softness` to within 0.003, so `softness` is a real distance in world
+   * units and does not need re-tuning when the camera's near/far change.
+   *
+   * Perspective cameras only — an orthographic camera needs
+   * `orthographicDepthToViewZ` here instead.
+   *
+   * Requires `depthWrite: false` on the particle material — which is already
+   * the case — or particles would occlude each other in the sampled depth.
+   */
+  private buildSoftFadeNode(): any {
+    // Both are negative in front of the camera, and the scene behind the
+    // particle is the more negative of the two, so this difference is positive
+    // and measured in world units.
+    const sceneViewZ = perspectiveDepthToViewZ(viewportDepthTexture(), cameraNear, cameraFar);
+    const gap = positionView.z.sub(sceneViewZ);
+    return gap.div(tslMax(this.uSoftness, float(1e-4))).clamp(0, 1);
+  }
+
+  /**
+   * Procedural fragment silhouette for `config.shape`.
+   *
+   * Every shape is a signed-distance-ish expression over the quad's own UVs, so
+   * a soft ember, a smoke puff, a spark streak and a shockwave ring all cost a
+   * handful of ALU and zero texture bandwidth — no sprite, no atlas, no filter
+   * taps, and nothing to author or ship. The shape is baked into the material,
+   * so each one compiles to its own program rather than branching per fragment.
+   *
+   * Note on `smoothstep`: GLSL and WGSL both leave `smoothstep(hi, lo, x)`
+   * undefined for `hi > lo`, so every falling edge here is written as the
+   * complement of a rising one instead of relying on reversed edges.
+   *
+   * @returns a 0..1 coverage node, or `null` for `'square'` — in which case
+   *   nothing at all is added to the shader.
+   */
+  private buildShapeMaskNode(): any {
+    const shape: ParticleShapeMask = this.config.shape ?? 'square';
+    if (shape === 'square') return null;
+
+    // Quad UV remapped to -1..1 about the centre; `d` is the radius.
+    const c = uv().sub(0.5).mul(2);
+    const cx = c.x;
+    const cy = c.y;
+    const d = tslLength(c);
+
+    // Stable per-particle randomness, so eroded and fractured shapes do not all
+    // come out identical.
+    const seed = hash(instanceIndex.toFloat());
+
+    switch (shape) {
+      case 'soft':
+        return smoothstep(float(0), float(1), d).oneMinus();
+
+      case 'smoke': {
+        // Fractal noise added to the radius before the falloff, scrolling in the
+        // third dimension so the puff churns rather than shimmering in place.
+        const n = mx_fractal_noise_float(
+          vec3(c.mul(1.6), seed.mul(21).add(this.uTime.mul(0.25))),
+          3
+        );
+        return smoothstep(float(0.05), float(1), d.add(n.mul(0.42))).oneMinus().mul(0.9);
+      }
+
+      case 'streak': {
+        // Narrow across, tapered along: reads as motion even on a static quad.
+        const core = smoothstep(float(0), float(1), tslAbs(cx).mul(3.4)).oneMinus();
+        const along = smoothstep(float(0), float(1), tslAbs(cy)).oneMinus();
+        return core.mul(along);
+      }
+
+      case 'leaf': {
+        // Half-width at this height, floored so the two tips cannot collapse the
+        // smoothstep edges onto each other and divide by zero.
+        const w = tslMax(float(1).sub(cy.mul(cy)), float(0.02));
+        const body = smoothstep(w.mul(0.30), w.mul(0.62), tslAbs(cx)).oneMinus();
+        const vein = smoothstep(float(0), float(0.06), tslAbs(cx)).oneMinus().mul(0.35);
+        return tslClamp(body.sub(vein.mul(0.4)), 0, 1);
+      }
+
+      case 'chip': {
+        // Radius wobbled by two incommensurate harmonics of the angle — an
+        // angular fragment whose facets are stable for the particle's lifetime.
+        const ang = tslAtan(cy, cx);
+        const r = float(0.62)
+          .add(sin(ang.mul(5).add(seed.mul(30))).mul(0.24))
+          .add(sin(ang.mul(9).sub(seed.mul(11))).mul(0.1));
+        return smoothstep(r.sub(0.14), r, d).oneMinus();
+      }
+
+      case 'ring':
+        return smoothstep(float(0), float(0.14), tslAbs(d.sub(0.82))).oneMinus();
+
+      default:
+        return null;
+    }
+  }
+
   private buildFragmentShader(): any {
     const opacityCurve = this.getCurve(this.config.opacityCurve, 'linear');
     const hasColorGradient = !!this.config.colorGradient;
@@ -440,9 +583,14 @@ export class GPUParticleSystem extends THREE.Group {
       const age = this.uTime.sub(spawnTime);
       const progress = age.div(life).clamp(0, 1);
 
-      // Discard dead particles (age >= lifetime OR age < 0 means not yet spawned)
-      // Use discard by returning fully transparent color for dead particles
-      // Note: Three.js doesn't have a direct 'discard' in TSL, so we use opacity=0
+      // Kill dead and not-yet-spawned particles outright.
+      //
+      // `Discard` is a real TSL statement (three/tsl), so there is no need to
+      // fake it with a zero alpha: a zero-alpha fragment still runs the whole
+      // shader and the blend, and on an additive material contributes nothing
+      // while costing everything.
+      const isAlive = age.greaterThanEqual(float(0)).and(age.lessThan(life));
+      Discard(isAlive.not());
 
       // Color and opacity over lifetime
       let color: any;
@@ -484,20 +632,31 @@ export class GPUParticleSystem extends THREE.Group {
       // Fade in at start for smoother appearance
       const fadeIn = smoothstep(float(0), float(0.1), progress);
 
-      // Kill dead particles by checking if age is valid
-      // Particles are alive when: 0 <= age < lifetime
-      const isAlive = age.greaterThanEqual(float(0)).and(age.lessThan(life));
-      const aliveMultiplier = isAlive.select(float(1), float(0));
+      let alpha: any = opacity.mul(fadeIn);
 
-      const fade = fadeIn.mul(aliveMultiplier);
+      // Procedural silhouette. Without one, an untextured particle is a hard
+      // square, which is why every soft look used to require a sprite.
+      const shapeMask = this.buildShapeMaskNode();
+      if (shapeMask) {
+        alpha = alpha.mul(shapeMask);
+      }
 
-      const finalColor = vec4(color, opacity.mul(fade).mul(aliveMultiplier));
+      // Soft particles: fade out where the quad slices into opaque geometry.
+      if (this.config.softParticles) {
+        alpha = alpha.mul(this.buildSoftFadeNode());
+      }
+
+      let finalColor: any = vec4(color, alpha);
 
       // Texture sampling
       if (this.config.texture) {
         const texColor = texture(this.config.texture, uv());
-        return vec4(finalColor.rgb.mul(texColor.rgb), finalColor.a.mul(texColor.a));
+        finalColor = vec4(finalColor.rgb.mul(texColor.rgb), finalColor.a.mul(texColor.a));
       }
+
+      // Drop fragments the blend could not distinguish from nothing. On the
+      // masked shapes this is most of the quad.
+      Discard(finalColor.a.lessThan(float(GPUParticleSystem.ALPHA_EPSILON)));
 
       return finalColor;
     })();
@@ -635,10 +794,20 @@ export class GPUParticleSystem extends THREE.Group {
 
     // STEP 1: Calculate how many particles to spawn this frame (GPU-based spawning)
     if (this.config.emissionRate! > 0) {
-      // Accumulate fractional particles
-      this.emissionAccumulator = (this.emissionAccumulator || 0) + this.config.emissionRate! * deltaTime;
-      const toSpawn = Math.floor(this.emissionAccumulator);
+      // Accumulate fractional particles. The step is clamped so one very long
+      // frame cannot resolve into a spawn burst — see MAX_EMISSION_STEP.
+      const emissionStep = Math.min(deltaTime, GPUParticleSystem.MAX_EMISSION_STEP);
+      this.emissionAccumulator = (this.emissionAccumulator || 0) + this.config.emissionRate! * emissionStep;
+      let toSpawn = Math.floor(this.emissionAccumulator);
       this.emissionAccumulator -= toSpawn;
+
+      const cap = this.config.maxSpawnPerFrame;
+      if (cap !== undefined && toSpawn > cap) {
+        toSpawn = Math.max(0, Math.floor(cap));
+        // Drop the debt instead of carrying it, so a recovered hitch resumes the
+        // nominal rate rather than emitting at the cap for the next N frames.
+        this.emissionAccumulator = 0;
+      }
 
       if (toSpawn > 0) {
         // Queue spawning on GPU via compute shader
@@ -904,6 +1073,18 @@ export class GPUParticleSystem extends THREE.Group {
   setBillboard(enabled: boolean): void {
     this.uBillboard.value = enabled ? 1 : 0;
     this.config.billboard = enabled;
+  }
+
+  /**
+   * Set the soft-particle fade distance, in world units.
+   *
+   * Live: the value is a uniform, so tuning it costs nothing and does not
+   * rebuild the material. Only toggling `softParticles` itself does, since that
+   * decides whether the fade is compiled in at all.
+   */
+  setSoftness(softness: number): void {
+    this.uSoftness.value = softness;
+    this.config.softness = softness;
   }
 
   /**

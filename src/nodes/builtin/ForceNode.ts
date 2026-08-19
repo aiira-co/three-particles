@@ -1,4 +1,4 @@
-import { VFXNode } from '../VFXGraph';
+import { VFXNode } from '../VFXGraph.js';
 
 export class ForceNode extends VFXNode {
     constructor() {
